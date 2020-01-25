@@ -2,15 +2,16 @@
  * This class is not supposed to be instantiated directly. Instead, any implementation of a
  * Normalizer will return an instance of this class when instantiated.
  */
-declare class Normalizer {}
+// eslint-disable-next-line @typescript-eslint/no-empty-interface
+interface Normalizer {}
 
-interface BertNormalizerOptions {
+export interface BertNormalizerOptions {
   /**
    * Whether to clean the text, by removing any control characters
    * and replacing all whitespaces by the classic one.
    * @default true
    */
-  cleanText?:          boolean;
+  cleanText?: boolean;
   /**
    * Whether to handle chinese chars by putting spaces around them.
    * @default true
@@ -20,19 +21,19 @@ interface BertNormalizerOptions {
    * Whether to lowercase.
    * @default true
    */
-  lowercase?:          boolean;
+  lowercase?: boolean;
   /**
    * Whether to strip all accents.
    * @default true
    */
-  stripAccents?:       boolean;
+  stripAccents?: boolean;
 }
 
 /**
  * Instantiate a Bert Normalizer with the given options
  *
  * @param [options] Normalizer options
- * @returns {Normalizer} Bert Normalizer. Takes care of normalizing raw text before giving it to a Bert model.
+ * @returns Bert Normalizer. Takes care of normalizing raw text before giving it to a Bert model.
  * This includes cleaning the text, handling accents, chinese chars and lowercasing
  */
 export function bertNormalizer(options?: BertNormalizerOptions): Normalizer;
