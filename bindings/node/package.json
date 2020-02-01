@@ -35,13 +35,14 @@
     "node": ">=10 < 11 || >=12 <14"
   },
   "scripts": {
-    "dev-ts": "rm -rf dist && tsc -p tsconfig.prod.json && ln -s $(pwd)/lib/bindings dist/bindings",
+    "dev-ts": "rm -rf dist && tsc -p tsconfig.lib.json && ln -s $(pwd)/lib/bindings dist/bindings",
     "dev-rs": "neon build",
     "dev": "npm run dev-rs && npm run dev-ts",
     "compile": "neon build --release",
     "clean-rs": "neon clean",
     "package": "node-pre-gyp package",
     "test": "jest",
+    "lint-check": "eslint --ext .js,.ts lib examples",
     "lint": "eslint --fix --ext .js,.ts lib examples"
   },
   "binary": {
