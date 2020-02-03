@@ -77,8 +77,8 @@ impl PyMappingProtocol for IndexableString {
 
         // Get the range from the relevant string
         let s = match self.t {
-            IndexableStringType::Original => self.s.get_range(range),
-            IndexableStringType::Normalized => self.s.get_range_original(range),
+            IndexableStringType::Original => self.s.get_range_original(range),
+            IndexableStringType::Normalized => self.s.get_range(range),
         };
 
         s.map(|s| s.to_owned())
@@ -193,8 +193,13 @@ impl Encoding {
     }
 
     #[getter]
-    fn get_overflowing(&self) -> Option<Encoding> {
-        self.encoding.get_overflowing().cloned().map(Encoding::new)
+    fn get_overflowing(&self) -> Vec<Encoding> {
+        self.encoding
+            .get_overflowing()
+            .clone()
+            .into_iter()
+            .map(Encoding::new)
+            .collect()
     }
 
     #[args(kwargs = "**")]

@@ -126,25 +126,73 @@ declare_types! {
         }
 
         method getOverflowing(mut cx) {
-            // getOverflowing(): Encoding | undefined;
+            // getOverflowing(): Encoding[]
 
             let this = cx.this();
             let guard = cx.lock();
 
-            let overflowing = this.borrow(&guard).encoding.execute(|encoding| {
-                encoding.unwrap().get_overflowing().cloned()
+            let overflowings = this.borrow(&guard).encoding.execute(|encoding| {
+                encoding.unwrap().get_overflowing().clone()
             });
+            let js_overflowings = JsArray::new(&mut cx, overflowings.len() as u32);
 
-            if let Some(overflowing) = overflowing {
+            for (index, overflowing) in overflowings.iter().enumerate() {
                 let mut js_overflowing = JsEncoding::new::<_, JsEncoding, _>(&mut cx, vec![])?;
 
                 // Set the content
                 let guard = cx.lock();
-                js_overflowing.borrow_mut(&guard).encoding.to_owned(Box::new(overflowing));
+                js_overflowing.borrow_mut(&guard).encoding.to_owned(Box::new(overflowing.clone()));
 
-                Ok(js_overflowing.upcast())
+                js_overflowings.set(&mut cx, index as u32, js_overflowing)?;
+            }
+
+            Ok(js_overflowings.upcast())
+        }
+
+        method getOriginalString(mut cx) {
+            // getOriginalString(begin?: number, end?: number)
+            let this = cx.this();
+
+            let len_original = {
+                let guard = cx.lock();
+                let len = this.borrow(&guard).encoding.execute(|encoding| {
+                    encoding.unwrap().get_normalized().len_original()
+                });
+                len
+            };
+
+            let get_index = |x: i32| -> usize {
+                if x >= 0 {
+                    x as usize
+                } else {
+                    (len_original as i32 + x) as usize
+                }
+            };
+
+            let begin_index = if let Some(begin_arg) = cx.argument_opt(0) {
+                let begin = begin_arg.downcast::<JsNumber>().or_throw(&mut cx)?.value() as i32;
+                get_index(begin)
             } else {
-                Ok(cx.undefined().upcast())
+                0
+            };
+            let end_index = if let Some(end_arg) = cx.argument_opt(1) {
+                let end = end_arg.downcast::<JsNumber>().or_throw(&mut cx)?.value() as i32;
+                get_index(end)
+            } else {
+                len_original
+            };
+
+            let original = {
+                let guard = cx.lock();
+                let original = this.borrow(&guard).encoding.execute(|encoding| {
+                    encoding.unwrap().get_normalized().get_range_original(begin_index..end_index)
+                });
+                original
+            };
+            if let Some(original) = original {
+                Ok(cx.string(original).upcast())
+            } else {
+                cx.throw_error("Error in offsets")
             }
         }
 

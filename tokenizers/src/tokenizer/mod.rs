@@ -285,7 +285,7 @@ impl Tokenizer {
                             vec![(0, sentence.len())],
                             vec![0],
                             vec![1],
-                            None,
+                            vec![],
                         ));
                     }
 
@@ -321,7 +321,7 @@ impl Tokenizer {
                         offsets,
                         vec![0; length],
                         vec![1; length],
-                        None,
+                        vec![],
                     ))
                 })
                 .collect::<Result<Vec<Encoding>>>()?;
@@ -331,7 +331,7 @@ impl Tokenizer {
             }
 
             let others = encodings.split_off(1);
-            let mut first: Encoding = encodings.into_iter().nth(0).unwrap();
+            let mut first: Encoding = encodings.into_iter().next().unwrap();
 
             for encoding in others {
                 first.merge_with(encoding);
@@ -542,15 +542,19 @@ impl Tokenizer {
         if let Some(params) = &self.padding {
             // We can only pad for a given size. If the Strategy is BatchLongest, it will be done
             // when we handle a batch
-            if let PaddingStrategy::Fixed(size) = params.strategy {
-                final_encoding.pad(
-                    size,
-                    params.pad_id,
-                    params.pad_type_id,
-                    &params.pad_token,
-                    &params.direction,
-                );
-            }
+            let size = if let PaddingStrategy::Fixed(size) = params.strategy {
+                size
+            } else {
+                final_encoding.get_ids().len()
+            };
+
+            final_encoding.pad(
+                size,
+                params.pad_id,
+                params.pad_type_id,
+                &params.pad_token,
+                &params.direction,
+            );
         }
 
         Ok(final_encoding)
@@ -627,7 +631,7 @@ impl Tokenizer {
                     let first_b = token
                         .content
                         .chars()
-                        .nth(0)
+                        .next()
                         .map(|c| {
                             if regex_syntax::is_word_character(c) {
                                 r"\b"
