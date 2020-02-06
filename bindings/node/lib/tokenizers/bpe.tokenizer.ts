@@ -57,13 +57,15 @@ export interface BPETokenizerTrainOptions {
   vocabSize?: number;
 }
 
+type BPETokenizerConfig = BPETokenizerOptions &
+  Required<Pick<BPETokenizerOptions, "unkToken" | "suffix">>;
+
 /**
  * Original BPE Tokenizer.
  * Represents the BPE algorithm, as introduced by Rico Sennrich (https://arxiv.org/abs/1508.07909)
  */
-export class BPETokenizer extends BaseTokenizer {
-  private static readonly defaultBPEOptions: BPETokenizerOptions &
-    Required<Pick<BPETokenizerOptions, "unkToken" | "suffix">> = {
+export class BPETokenizer extends BaseTokenizer<BPETokenizerConfig> {
+  private static readonly defaultBPEOptions: BPETokenizerConfig = {
     suffix: "</w>",
     unkToken: "<unk>"
   };
@@ -78,8 +80,8 @@ export class BPETokenizer extends BaseTokenizer {
     vocabSize: 30000
   };
 
-  private constructor(tokenizer: Tokenizer) {
-    super(tokenizer);
+  private constructor(tokenizer: Tokenizer, configuration: BPETokenizerConfig) {
+    super(tokenizer, configuration);
   }
 
   /**
@@ -105,6 +107,7 @@ export class BPETokenizer extends BaseTokenizer {
     }
 
     const tokenizer = new Tokenizer(model);
+    tokenizer.addSpecialTokens([opts.unkToken]);
 
     const normalizer = sequenceNormalizer([nfkcNormalizer(), lowercaseNormalizer()]);
     tokenizer.setNormalizer(normalizer);
@@ -113,7 +116,7 @@ export class BPETokenizer extends BaseTokenizer {
     const decoder = bpeDecoder(opts.suffix);
     tokenizer.setDecoder(decoder);
 
-    return new BPETokenizer(tokenizer);
+    return new BPETokenizer(tokenizer, opts);
   }
 
   /**

@@ -1,8 +1,9 @@
 import { promisify } from "util";
 
 import { Encoding } from "./encoding";
+import { PaddingDirection, TruncationStrategy } from "./enums";
 import { BPE } from "./models";
-import { Tokenizer } from "./tokenizer";
+import { PaddingConfiguration, Tokenizer, TruncationConfiguration } from "./tokenizer";
 
 // jest.mock('../bindings/tokenizer');
 // jest.mock('../bindings/models', () => ({
@@ -108,7 +109,7 @@ describe("Tokenizer", () => {
     });
 
     describe("when truncation is enabled", () => {
-      it("should truncate with default if no truncation options provided", async () => {
+      it("truncates with default if no truncation options provided", async () => {
         tokenizer.setTruncation(2);
 
         const singleEncoding = await encode("my name is john", null);
@@ -118,14 +119,14 @@ describe("Tokenizer", () => {
         expect(pairEncoding.getTokens()).toEqual(["my", "pair"]);
       });
 
-      it("should throw an error with strategy `only_second` and no pair is encoded", async () => {
-        tokenizer.setTruncation(2, { strategy: "only_second" });
+      it("throws an error with strategy `only_second` and no pair is encoded", async () => {
+        tokenizer.setTruncation(2, { strategy: TruncationStrategy.OnlySecond });
         await expect(encode("my name is john", null)).rejects.toThrow();
       });
     });
 
     describe("when padding is enabled", () => {
-      it("should not pad anything with default options", async () => {
+      it("does not pad anything with default options", async () => {
         tokenizer.setPadding();
 
         const singleEncoding = await encode("my name", null);
@@ -135,7 +136,7 @@ describe("Tokenizer", () => {
         expect(pairEncoding.getTokens()).toEqual(["my", "name", "pair"]);
       });
 
-      it("should pad to the right by default", async () => {
+      it("pads to the right by default", async () => {
         tokenizer.setPadding({ maxLength: 5 });
 
         const singleEncoding = await encode("my name", null);
@@ -155,6 +156,31 @@ describe("Tokenizer", () => {
           "[PAD]",
           "[PAD]"
         ]);
+      });
+    });
+
+    describe("setTruncation", () => {
+      it("returns the full truncation configuration", () => {
+        const truncation = tokenizer.setTruncation(2);
+        const expectedConfig: TruncationConfiguration = {
+          maxLength: 2,
+          strategy: TruncationStrategy.LongestFirst,
+          stride: 0
+        };
+        expect(truncation).toEqual(expectedConfig);
+      });
+    });
+
+    describe("setPadding", () => {
+      it("returns the full padding params", () => {
+        const padding = tokenizer.setPadding();
+        const expectedConfig: PaddingConfiguration = {
+          direction: PaddingDirection.Right,
+          padId: 0,
+          padToken: "[PAD]",
+          padTypeId: 0
+        };
+        expect(padding).toEqual(expectedConfig);
       });
     });
   });

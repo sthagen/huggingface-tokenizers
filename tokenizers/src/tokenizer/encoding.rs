@@ -1,10 +1,19 @@
 use crate::tokenizer::NormalizedString;
 
 /// The various possible padding directions.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum PaddingDirection {
     Left,
     Right,
+}
+
+impl std::convert::AsRef<str> for PaddingDirection {
+    fn as_ref(&self) -> &str {
+        match self {
+            PaddingDirection::Left => "left",
+            PaddingDirection::Right => "right",
+        }
+    }
 }
 
 /// Represents the output of a `Tokenizer`.
@@ -206,17 +215,17 @@ impl Encoding {
 
     pub fn pad(
         &mut self,
-        pad_length: usize,
+        target_length: usize,
         pad_id: u32,
         pad_type_id: u32,
         pad_token: &str,
-        direction: &PaddingDirection,
+        direction: PaddingDirection,
     ) {
-        if self.ids.len() > pad_length {
+        if self.ids.len() > target_length {
             // We just do nothing if the wanted padding length is smaller than us
             return;
         }
-        let pad_length = pad_length - self.ids.len();
+        let pad_length = target_length - self.ids.len();
 
         let ids_pad = vec![pad_id; pad_length];
         let type_ids_pad = vec![pad_type_id; pad_length];
@@ -248,7 +257,7 @@ impl Encoding {
 
         // Also pad each overflowing encoding
         self.overflowing.iter_mut().for_each(|encoding| {
-            encoding.pad(pad_length, pad_id, pad_type_id, pad_token, direction)
+            encoding.pad(target_length, pad_id, pad_type_id, pad_token, direction)
         });
     }
 }

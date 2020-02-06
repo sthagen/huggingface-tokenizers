@@ -28,6 +28,7 @@ fn models(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<models::Model>()?;
     m.add_class::<models::BPE>()?;
     m.add_class::<models::WordPiece>()?;
+    m.add_class::<models::WordLevel>()?;
     Ok(())
 }
 
@@ -40,6 +41,7 @@ fn pre_tokenizers(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<pre_tokenizers::WhitespaceSplit>()?;
     m.add_class::<pre_tokenizers::BertPreTokenizer>()?;
     m.add_class::<pre_tokenizers::Metaspace>()?;
+    m.add_class::<pre_tokenizers::CharDelimiterSplit>()?;
     Ok(())
 }
 

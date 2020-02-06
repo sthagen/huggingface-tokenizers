@@ -67,7 +67,7 @@ export interface BertWordPieceTrainOptions {
    */
   showProgress?: boolean;
   /**
-   * @default ["[UNK]", "[SEP]", "[CLS]"]
+   * @default ["[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]"]
    */
   specialTokens?: string[];
   /**
@@ -80,13 +80,15 @@ export interface BertWordPieceTrainOptions {
   wordpiecesPrefix?: string;
 }
 
+type BertTokenizerConfig = Required<Omit<BertWordPieceOptions, "vocabFile">> & {
+  vocabFile?: string;
+};
+
 /**
  * Bert WordPiece Tokenizer
  */
-export class BertWordPieceTokenizer extends BaseTokenizer {
-  private static readonly defaultBertOptions: Required<
-    Omit<BertWordPieceOptions, "vocabFile">
-  > & { vocabFile?: string } = {
+export class BertWordPieceTokenizer extends BaseTokenizer<BertTokenizerConfig> {
+  private static readonly defaultBertOptions: BertTokenizerConfig = {
     addSpecialTokens: true,
     cleanText: true,
     clsToken: "[CLS]",
@@ -103,13 +105,13 @@ export class BertWordPieceTokenizer extends BaseTokenizer {
     limitAlphabet: 1000,
     minFrequency: 2,
     showProgress: true,
-    specialTokens: ["<unk>"],
+    specialTokens: ["[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]"],
     vocabSize: 30000,
     wordpiecesPrefix: "##"
   };
 
-  private constructor(tokenizer: Tokenizer) {
-    super(tokenizer);
+  private constructor(tokenizer: Tokenizer, configuration: BertTokenizerConfig) {
+    super(tokenizer, configuration);
   }
 
   /**
@@ -131,6 +133,7 @@ export class BertWordPieceTokenizer extends BaseTokenizer {
     }
 
     const tokenizer = new Tokenizer(model);
+    tokenizer.addSpecialTokens([opts.clsToken, opts.sepToken, opts.unkToken]);
 
     const normalizer = bertNormalizer(opts);
     tokenizer.setNormalizer(normalizer);
@@ -147,19 +150,17 @@ export class BertWordPieceTokenizer extends BaseTokenizer {
         throw new Error("clsToken not found in the vocabulary");
       }
 
-      if (opts.addSpecialTokens) {
-        const processor = bertProcessing(
-          [opts.sepToken, sepTokenId],
-          [opts.clsToken, clsTokenId]
-        );
-        tokenizer.setPostProcessor(processor);
-      }
+      const processor = bertProcessing(
+        [opts.sepToken, sepTokenId],
+        [opts.clsToken, clsTokenId]
+      );
+      tokenizer.setPostProcessor(processor);
     }
 
     const decoder = wordPieceDecoder(opts.wordpiecesPrefix);
     tokenizer.setDecoder(decoder);
 
-    return new BertWordPieceTokenizer(tokenizer);
+    return new BertWordPieceTokenizer(tokenizer, opts);
   }
 
   /**

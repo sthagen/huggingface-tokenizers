@@ -1,3 +1,5 @@
+import { PaddingDirection } from "./enums";
+
 /**
  * An Encoding as returned by the Tokenizer
  */
@@ -25,7 +27,7 @@ export interface Encoding {
   /**
    * Returns the special tokens mask
    */
-  getSpecialTokensMask(): number;
+  getSpecialTokensMask(): number[];
 
   /**
    * Returns the tokenized string
@@ -70,7 +72,7 @@ interface PaddingOptions {
   /**
    * @default "right"
    */
-  direction?: "left" | "right";
+  direction?: PaddingDirection;
   /**
    * The index to be used when padding
    * @default 0

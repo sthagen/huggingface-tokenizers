@@ -1,13 +1,17 @@
 {
   "name": "tokenizers",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "repository": {
     "type": "git",
-    "url": ".."
+    "url": "git+https://github.com/huggingface/tokenizers.git"
   },
+  "bugs": {
+    "url": "https://github.com/huggingface/tokenizers/issues"
+  },
+  "homepage": "https://github.com/huggingface/tokenizers/tree/master/bindings/node",
   "author": "Anthony MOI <m.anthony.moi@gmail.com>",
   "license": "Apache-2.0",
   "dependencies": {
@@ -35,7 +39,7 @@
     "node": ">=10 < 11 || >=12 <14"
   },
   "scripts": {
-    "dev-ts": "rm -rf dist && tsc -p tsconfig.lib.json && ln -s $(pwd)/lib/bindings dist/bindings",
+    "dev-ts": "rm -rf dist && tsc -p tsconfig.lib.json && rsync -a $(pwd)/lib/bindings/ dist/bindings/",
     "dev-rs": "neon build",
     "dev": "npm run dev-rs && npm run dev-ts",
     "compile": "neon build --release",
