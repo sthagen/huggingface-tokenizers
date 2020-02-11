@@ -1,4 +1,4 @@
-__version__ = "0.3.0"
+__version__ = "0.4.2"
 
 from .tokenizers import Tokenizer, Encoding
 from .tokenizers import decoders
