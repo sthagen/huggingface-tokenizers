@@ -3,7 +3,7 @@ from setuptools_rust import Binding, RustExtension
 
 setup(
     name="tokenizers",
-    version="0.4.2",
+    version="0.5.0",
     description="Fast and Customizable Tokenizers",
     long_description=open("README.md", "r", encoding="utf-8").read(),
     long_description_content_type="text/markdown",
@@ -13,6 +13,20 @@ setup(
     url="https://github.com/huggingface/tokenizers",
     license="Apache License 2.0",
     rust_extensions=[RustExtension("tokenizers.tokenizers", binding=Binding.PyO3)],
+    classifiers=[
+        "Development Status :: 5 - Production/Stable",
+        "Intended Audience :: Developers",
+        "Intended Audience :: Education",
+        "Intended Audience :: Science/Research",
+        "License :: OSI Approved :: Apache Software License",
+        "Operating System :: OS Independent",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.5",
+        "Programming Language :: Python :: 3.6",
+        "Programming Language :: Python :: 3.7",
+        "Programming Language :: Python :: 3.8",
+        "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    ],
     packages=[
         "tokenizers",
         "tokenizers.models",
