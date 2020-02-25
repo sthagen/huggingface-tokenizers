@@ -1,7 +1,9 @@
-use super::{Cache, Error, Pair, WithFirstLastIterator, Word, DEFAULT_CACHE_CAPACITY};
+use super::{
+    super::OrderedVocabIter, Cache, Error, Pair, WithFirstLastIterator, Word,
+    DEFAULT_CACHE_CAPACITY,
+};
 use crate::tokenizer::{Model, Offsets, Result, Token};
 use rand::{thread_rng, Rng};
-use serde::{Serialize, Serializer};
 use serde_json::Value;
 use std::{
     collections::HashMap,
@@ -418,9 +420,14 @@ impl Model for BPE {
         self.vocab_r.get(&id).cloned()
     }
 
-    fn save(&self, folder: &Path, name: &str) -> Result<Vec<PathBuf>> {
+    fn save(&self, folder: &Path, name: Option<&str>) -> Result<Vec<PathBuf>> {
+        let vocab_file_name = match name {
+            Some(name) => format!("{}-vocab.json", name),
+            None => "vocab.json".to_string(),
+        };
+
         // Write vocab.json
-        let vocab_path: PathBuf = [folder, Path::new(&format!("{}-vocab.json", name))]
+        let vocab_path: PathBuf = [folder, Path::new(vocab_file_name.as_str())]
             .iter()
             .collect();
         let mut vocab_file = File::create(&vocab_path)?;
@@ -429,7 +436,12 @@ impl Model for BPE {
         vocab_file.write_all(&serialized.as_bytes())?;
 
         // Write merges.txt
-        let merges_path: PathBuf = [folder, Path::new(&format!("{}-merges.txt", name))]
+        let merges_file_name = match name {
+            Some(name) => format!("{}-merges.txt", name),
+            None => "merges.txt".to_string(),
+        };
+
+        let merges_path: PathBuf = [folder, Path::new(merges_file_name.as_str())]
             .iter()
             .collect();
         let mut merges_file = File::create(&merges_path)?;
@@ -450,28 +462,6 @@ impl Model for BPE {
         )?;
 
         Ok(vec![vocab_path, merges_path])
-    }
-}
-
-/// Wraps a vocab mapping (ID -> token) to a struct that will be serialized in order
-/// of token ID, smallest to largest.
-struct OrderedVocabIter<'a> {
-    vocab_r: &'a HashMap<u32, String>,
-}
-
-impl<'a> OrderedVocabIter<'a> {
-    fn new(vocab_r: &'a HashMap<u32, String>) -> Self {
-        Self { vocab_r }
-    }
-}
-
-impl<'a> Serialize for OrderedVocabIter<'a> {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let iter = (0u32..(self.vocab_r.len() as u32)).map(|i| (&self.vocab_r[&i], i));
-        serializer.collect_map(iter)
     }
 }
 

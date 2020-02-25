@@ -1,3 +1,4 @@
+use super::OrderedVocabIter;
 use crate::tokenizer::{Model, Result, Token};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -162,21 +163,20 @@ impl Model for WordLevel {
         self.vocab.keys().len()
     }
 
-    fn save(&self, folder: &Path, name: &str) -> Result<Vec<PathBuf>> {
-        // Write vocab.txt
-        let vocab_path: PathBuf = [folder, Path::new(&format!("{}-vocab.txt", name))]
+    fn save(&self, folder: &Path, name: Option<&str>) -> Result<Vec<PathBuf>> {
+        let vocab_file_name = match name {
+            Some(name) => format!("{}-vocab.json", name),
+            None => "vocab.json".to_string(),
+        };
+
+        // Write vocab.json
+        let vocab_path: PathBuf = [folder, Path::new(vocab_file_name.as_str())]
             .iter()
             .collect();
         let mut vocab_file = File::create(&vocab_path)?;
-        let mut vocab: Vec<(&String, &u32)> = self.vocab.iter().collect();
-        vocab.sort_unstable_by_key(|k| *k.1);
-        vocab_file.write_all(
-            &vocab
-                .into_iter()
-                .map(|(token, _)| format!("{}\n", token).as_bytes().to_owned())
-                .flatten()
-                .collect::<Vec<_>>()[..],
-        )?;
+        let order_vocab_iter = OrderedVocabIter::new(&self.vocab_r);
+        let serialized = serde_json::to_string(&order_vocab_iter)?;
+        vocab_file.write_all(&serialized.as_bytes())?;
 
         Ok(vec![vocab_path])
     }
