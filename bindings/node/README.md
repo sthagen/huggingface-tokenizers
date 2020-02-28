@@ -43,19 +43,20 @@ import { BertWordPieceTokenizer } from "tokenizers";
 const wordPieceTokenizer = await BertWordPieceTokenizer.fromOptions({ vocabFile: "./vocab.txt" });
 const wpEncoded = await wordPieceTokenizer.encode("Who is John?", "John is a teacher");
 
-console.log(wpEncoded.getTokens());
-console.log(wpEncoded.getIds());
-console.log(wpEncoded.getAttentionMask());
-console.log(wpEncoded.getOffsets());
-console.log(wpEncoded.getOverflowing());
+console.log(wpEncoded.length);
+console.log(wpEncoded.tokens);
+console.log(wpEncoded.ids);
+console.log(wpEncoded.attentionMask);
+console.log(wpEncoded.offsets);
+console.log(wpEncoded.overflowing);
+console.log(wpEncoded.specialTokensMask);
+console.log(wpEncoded.typeIds);
 console.log(wpEncoded.getOriginalString());
-console.log(wpEncoded.getSpecialTokensMask());
-console.log(wpEncoded.getTypeIds());
 ```
 
 ## Provided Tokenizers
 
- - `CharBPETokenizer`: The original BPE
+ - `BPETokenizer`: The original BPE
  - `ByteLevelBPETokenizer`: The byte level version of the BPE
  - `SentencePieceBPETokenizer`: A BPE implementation compatible with the one used by SentencePiece
  - `BertWordPieceTokenizer`: The famous Bert tokenizer, using WordPiece
