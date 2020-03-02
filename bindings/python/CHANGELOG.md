@@ -1,6 +1,9 @@
-# v0.6.0 (not published yet)
+# v0.6.0
 
-Fixes:
+## Changes:
+- Big improvements in speed for BPE (Both training and tokenization) ([#165](https://github.com/huggingface/tokenizers/pull/165))
+
+## Fixes:
 - Some default tokens were missing from `BertWordPieceTokenizer` (cf [#160](https://github.com/huggingface/tokenizers/issues/160))
 - There was a bug in ByteLevel PreTokenizer that caused offsets to be wrong if a char got split up
 in multiple bytes. (cf [#156](https://github.com/huggingface/tokenizers/pull/156))
@@ -10,7 +13,7 @@ in multiple bytes. (cf [#156](https://github.com/huggingface/tokenizers/pull/156
 - Do not open all files directly while training ([#163](https://github.com/huggingface/tokenizers/issues/163))
 
 ## Fixes:
-- We introduced a bug related to the saving of the WordPiece model in 0.5.2: The `vocab.txt` file was named
+- We introduced a bug related to the saving of the WordPiece model in 0.5.1: The `vocab.txt` file was named
 `vocab.json`. This is now fixed.
 - The `WordLevel` model was also saving its vocabulary to the wrong format.
 
