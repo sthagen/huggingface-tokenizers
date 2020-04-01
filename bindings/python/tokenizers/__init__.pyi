@@ -19,6 +19,21 @@ Offsets = Tuple[int, int]
 class Encoding:
     """ An Encoding as returned by the Tokenizer """
 
+    @staticmethod
+    def merge(encodings: List[Encoding], growing_offsets: bool = True) -> Encoding:
+        """ Merge the list of Encoding into one final Encoding
+
+        Args:
+            encodings: List[Encoding]:
+                The list of encodings
+
+            growing_offsets: bool:
+                Whether the offsets should accumulate while merging
+
+        Returns:
+            The resulting Encoding
+        """
+        pass
     @property
     def ids(self) -> List[int]:
         """ The tokenized ids """
@@ -26,6 +41,10 @@ class Encoding:
     @property
     def tokens(self) -> List[str]:
         """ The tokenized strings """
+        pass
+    @property
+    def words(self) -> List[int]:
+        """ The tokenized words index """
         pass
     @property
     def type_ids(self) -> List[int]:
@@ -50,6 +69,50 @@ class Encoding:
     @property
     def overflowing(self) -> Optional[Encoding]:
         """ The overflowing encoding, after truncation """
+        pass
+    def char_to_word_offsets(self, pos: int) -> Option[Offsets]:
+        """ Find the offsets of the word that contains the character at the specified position
+
+        Args:
+            pos: int:
+                The position of a char in the input string
+
+        Returns:
+            The offsets of the word that contains this char
+        """
+        pass
+    def char_to_token_offsets(self, pos: int) -> Option[Offsets]:
+        """ Find the offsets of the token that contains the character at the specified position
+
+        Args:
+            pos: int:
+                The position of a char in the input string
+
+        Returns:
+            The offsets of the token that contains this char
+        """
+        pass
+    def token_to_word_offsets(self, index: int) -> Optional[Offsets]:
+        """ Find the offsets of the word that contains the token at the given index
+
+        Args:
+            index: int:
+                The index of a token
+
+        Returns:
+            The offsets of the word that contains this token
+        """
+        pass
+    def char_to_token(self, pos: int) -> Optional[int]:
+        """ Find the index of the token at the position of the given char
+
+        Args:
+            pos: int:
+                The position of a char in the input string
+
+        Returns:
+            The index of the token that contains this char
+        """
         pass
     def pad(
         self,
@@ -88,6 +151,37 @@ class Encoding:
             stride: (`optional`) unsigned int:
                 The length of the previous first sequence to be included
                 in the overflowing sequence
+        """
+        pass
+
+class AddedToken:
+    """ AddedToken represents a token to be added to a Tokenizer
+
+    An AddedToken can have special options defining the way it should behave.
+    """
+
+    def __new__(
+        cls, content: str, single_word: bool = False, lstrip: bool = False, rstrip: bool = False
+    ) -> AddedToken:
+        """ Instantiate a new AddedToken
+
+        Args:
+            content: str:
+                The content of the token
+
+            single_word: bool
+                Whether this token should only match against single word. If True,
+                this token will never match inside of a word.
+
+            lstrip: bool
+                Whether this token should strip all potential whitespaces on the left side.
+                If True, this token will greedily match any whitespace on the left and then strip
+                them out.
+
+            rstrip: bool
+                Whether this token should strip all potential whitespaces on the right side.
+                If True, this token will greedily match any whitespace on the right and then strip
+                them out.
         """
         pass
 
@@ -164,12 +258,26 @@ class Tokenizer:
         :return:
         """
         pass
-    def get_vocab_size(self, with_added_tokens: Optional[bool]) -> int:
+    def get_vocab(self, with_added_tokens: bool = True) -> Dict[str, int]:
+        """ Returns the vocabulary
+
+        Args:
+            with_added_tokens: boolean:
+                Whether to include the added tokens in the vocabulary
+
+        Returns:
+            The vocabulary
+        """
+        pass
+    def get_vocab_size(self, with_added_tokens: bool = True) -> int:
         """ Returns the size of the vocabulary
 
         Args:
-            with_added_tokens: (`optional`) boolean:
+            with_added_tokens: boolean:
                 Whether to include the added tokens in the vocabulary's size
+
+        Returns:
+            The size of the vocabulary
         """
         pass
     def enable_truncation(self, max_length: int, stride: Optional[int], strategy: Optional[str]):
@@ -320,31 +428,54 @@ class Tokenizer:
             The corresponding string if it exists, None otherwise
         """
         pass
-    def add_tokens(self, tokens: List[Union[str, Tuple[str, bool]]]) -> int:
+    def add_tokens(self, tokens: List[Union[str, AddedToken]]) -> int:
         """ Add the given tokens to the vocabulary
 
         Args:
-            tokens: List[Union[str, Tuple[str, bool]]]:
+            tokens: List[Union[str, AddedToken]]:
                 A list of tokens to add to the vocabulary. Each token can either be
-                a string, or a tuple with a string representing the token, and a boolean
-                option representing whether to match on single words only.
-                If the boolean is not included, it defaults to False
+                a string, or an instance of AddedToken
 
         Returns:
             The number of tokens that were added to the vocabulary
         """
         pass
-    def add_special_tokens(self, tokens: List[str]) -> int:
+    def add_special_tokens(self, tokens: List[Union[str, AddedToken]]) -> int:
         """ Add the given special tokens to the vocabulary, and treat them as special tokens.
 
         The special tokens will never be processed by the model, and will be
         removed while decoding.
 
         Args:
-            tokens: List[str]:
-                The list of special tokens to add
+            tokens: List[Union[str, AddedToken]]:
+                The list of special tokens to add. Each token can either be a string
+                or an instance of AddedToken
 
         Returns:
             The number of tokens that were added to the vocabulary
+        """
+        pass
+    def post_process(
+        self, encoding: Encoding, pair: Optional[Encoding] = None, add_special_tokens: bool = True
+    ) -> Encoding:
+        """ Apply all the post-processing steps to the given encodings.
+
+        The various steps are:
+            1. Truncate according to global params (provided to `enable_truncation`)
+            2. Apply the PostProcessor
+            3. Pad according to global params. (provided to `enable_padding`)
+
+        Args:
+            encoding: Encoding:
+                The main Encoding to post process
+
+            pair: Optional[Encoding]:
+                An optional pair Encoding
+
+            add_special_tokens: bool:
+                Whether to add special tokens
+
+        Returns:
+            The resulting Encoding
         """
         pass

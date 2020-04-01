@@ -63,6 +63,16 @@ export interface PaddingOptions {
 }
 
 /**
+ * A list of tokens
+ */
+export type TokenizedSequence = string[];
+
+/**
+ * A list of tokens, each associated with its offsets
+ */
+export type TokenizedSequenceWithOffsets = [string, [number, number]][];
+
+/**
  * A Tokenizer works as a pipeline, it processes some raw text as input and outputs
  * an `Encoding`.
  * The various steps of the pipeline are:
@@ -85,21 +95,20 @@ export class Tokenizer {
    * Add the given tokens to the vocabulary
    *
    * @param tokens A list of tokens to add to the vocabulary.
-   * Each token can either be a string, or a tuple with a string representing the token,
-   * and a boolean option representing whether to match on single words only.
-   * If the boolean is not included, it defaults to False
+   * Each token can either be a string, or an instance of {@link AddedToken}.
    * @returns The number of tokens that were added to the vocabulary
    */
-  addTokens(tokens: (string | [string, boolean])[]): number;
+  addTokens(tokens: (string | AddedToken)[]): number;
 
   /**
    * Add the given special tokens to the vocabulary, and treat them as special tokens.
    * The special tokens will never be processed by the model, and will be removed while decoding.
    *
-   * @param tokens The list of special tokens to add
+   * @param tokens The list of special tokens to add.
+   * Each token can either be a string or an instance of {@link AddedToken}.
    * @returns The number of tokens that were added to the vocabulary
    */
-  addSpecialTokens(tokens: string[]): number;
+  addSpecialTokens(tokens: (string | AddedToken)[]): number;
 
   /**
    * Encode the given sequence
@@ -126,6 +135,36 @@ export class Tokenizer {
   encodeBatch(
     sequences: (string | [string, string])[],
     addSpecialTokens: boolean,
+    __callback: (err: Error, encodings: RawEncoding[]) => void
+  ): void;
+
+  /**
+   * Encode the given tokens sequence
+   * @param sequence A sequence of tokens to encode.
+   * If the sequence is a {@link TokenizedSequence}, offsets will be automatically generated,
+   * making the hypothesis that all the tokens in the sequence are contiguous in the original string
+   * @param [typeId=0] The type id of the given sequence. Defaults to 0.
+   * @param __callback Callback called when encoding is complete
+   * @since 0.6.0
+   */
+  encodeTokenized(
+    sequence: TokenizedSequence | TokenizedSequenceWithOffsets,
+    typeId: number | undefined,
+    __callback: (err: Error, encoding: RawEncoding) => void
+  ): void;
+
+  /**
+   * Encode the given tokens sequences
+   * @param sequences A list of sequences to encode.
+   * If a sequence is a {@link TokenizedSequence}, offsets will be automatically generated,
+   * making the hypothesis that all the tokens in the sequence are contiguous in the original string
+   * @param [typeId=0] The type id of the given sequences. Defaults to 0.
+   * @param __callback Callback called when encoding is complete
+   * @since 0.6.0
+   */
+  encodeTokenizedBatch(
+    sequences: (TokenizedSequence | TokenizedSequenceWithOffsets)[],
+    typeId: number | undefined,
     __callback: (err: Error, encodings: RawEncoding[]) => void
   ): void;
 
@@ -212,6 +251,13 @@ export class Tokenizer {
   train(trainer: Trainer, files: string[]): void;
 
   /**
+   * Returns the vocabulary
+   *
+   * @param [withAddedTokens=true] Whether to include the added tokens in the vocabulary
+   */
+  getVocab(withAddedTokens?: boolean): { [token: string]: number };
+
+  /**
    * Returns the size of the vocabulary
    *
    * @param [withAddedTokens=true] Whether to include the added tokens in the vocabulary's size
@@ -287,4 +333,68 @@ export class Tokenizer {
    * @throws Will throw an error if the decoder is already used in another Tokenizer
    */
   setDecoder(decoder: Decoder): void;
+
+  /**
+   * Apply all the post-processing steps to the given encodings.
+   * The various steps are:
+   * 1. Truncate according to global params (@see setTruncation)
+   * 2. Apply the PostProcessor
+   * 3. Pad according to global params (@see setPadding)
+   * @param encoding The main Encoding to post process
+   * @param [pair] An optional pair Encoding
+   * @param [addSpecialTokens=true] Whether to add special tokens. Default to `true`.
+   * @since 0.6.0
+   */
+  postProcess(
+    encoding: RawEncoding,
+    pair?: RawEncoding,
+    addSpecialTokens?: boolean
+  ): RawEncoding;
+}
+
+/**
+ * Options used to construct an AddedToken
+ * @since 0.6.0
+ */
+export interface AddedTokenOptions {
+  /**
+   * Whether this token should strip all potential whitespaces on the left side.
+   * If True, this token will greedily match any whitespace on the left and then strip
+   * them out.
+   * @default False
+   */
+  leftStrip?: boolean;
+  /**
+   * Whether this token should strip all potential whitespaces on the right side.
+   * If True, this token will greedily match any whitespace on the right and then strip
+   * them out.
+   * @default False
+   */
+  rightStrip?: boolean;
+  /**
+   * Whether this token should only match against single word.
+   * If True, this token will never match inside of a word.
+   * @default False
+   */
+  singleWord?: boolean;
+}
+
+/**
+ * AddedToken represents a token to be added to a Tokenizer.
+ * An AddedToken can have special options defining the way it should behave.
+ *
+ * @since 0.6.0
+ */
+export class AddedToken {
+  /**
+   * Instantiate a new AddedToken
+   * @param content The content of the token
+   * @param [options] Options for the token
+   */
+  constructor(content: string, options?: AddedTokenOptions);
+
+  /**
+   * Get the content of the AddedToken
+   */
+  getContent(): string;
 }

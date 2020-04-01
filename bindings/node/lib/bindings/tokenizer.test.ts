@@ -7,7 +7,14 @@ import { PaddingDirection, TruncationStrategy } from "./enums";
 import { BPE } from "./models";
 import { lowercaseNormalizer } from "./normalizers";
 import { RawEncoding } from "./raw-encoding";
-import { PaddingConfiguration, Tokenizer, TruncationConfiguration } from "./tokenizer";
+import {
+  AddedToken,
+  PaddingConfiguration,
+  TokenizedSequence,
+  TokenizedSequenceWithOffsets,
+  Tokenizer,
+  TruncationConfiguration
+} from "./tokenizer";
 
 // jest.mock('../bindings/tokenizer');
 // jest.mock('../bindings/models', () => ({
@@ -21,6 +28,34 @@ import { PaddingConfiguration, Tokenizer, TruncationConfiguration } from "./toke
 // });
 
 // const TokenizerMock = mocked(Tokenizer);
+
+describe("AddedToken", () => {
+  it("instantiates with only content", () => {
+    const addToken = new AddedToken("test");
+    expect(addToken.constructor.name).toEqual("AddedToken");
+  });
+
+  it("instantiates with empty options", () => {
+    const addToken = new AddedToken("test", {});
+    expect(addToken.constructor.name).toEqual("AddedToken");
+  });
+
+  it("instantiates with options", () => {
+    const addToken = new AddedToken("test", {
+      leftStrip: true,
+      rightStrip: true,
+      singleWord: true
+    });
+    expect(addToken.constructor.name).toEqual("AddedToken");
+  });
+
+  describe("getContent", () => {
+    it("returns the string content of AddedToken", () => {
+      const addedToken = new AddedToken("test");
+      expect(addedToken.getContent()).toEqual("test");
+    });
+  });
+});
 
 describe("Tokenizer", () => {
   it("has expected methods", () => {
@@ -39,6 +74,7 @@ describe("Tokenizer", () => {
     expect(typeof tokenizer.getNormalizer).toBe("function");
     expect(typeof tokenizer.getPostProcessor).toBe("function");
     expect(typeof tokenizer.getPreTokenizer).toBe("function");
+    expect(typeof tokenizer.getVocab).toBe("function");
     expect(typeof tokenizer.getVocabSize).toBe("function");
     expect(typeof tokenizer.idToToken).toBe("function");
     expect(typeof tokenizer.runningTasks).toBe("function");
@@ -61,6 +97,15 @@ describe("Tokenizer", () => {
       const nbAdd = tokenizer.addTokens(["my", "name", "is", "john", "pair"]);
       expect(nbAdd).toBe(5);
     });
+
+    it("accepts a list of AddedToken as new tokens when initial model is empty", () => {
+      const model = BPE.empty();
+      const tokenizer = new Tokenizer(model);
+      const addedToken = new AddedToken("test");
+
+      const nbAdd = tokenizer.addTokens([addedToken]);
+      expect(nbAdd).toBe(1);
+    });
   });
 
   describe("encode", () => {
@@ -77,7 +122,8 @@ describe("Tokenizer", () => {
 
       const model = BPE.empty();
       tokenizer = new Tokenizer(model);
-      tokenizer.addTokens(["my", "name", "is", "john", "pair"]);
+      tokenizer.addTokens(["my", "name", "is", "john", new AddedToken("pair")]);
+
       encode = promisify(tokenizer.encode.bind(tokenizer));
     });
 
@@ -111,9 +157,9 @@ describe("Tokenizer", () => {
 
       expect(encoding.getOffsets()).toEqual([
         [0, 2],
-        [2, 6],
-        [6, 8],
-        [8, 12],
+        [3, 7],
+        [8, 10],
+        [11, 15],
         [0, 4]
       ]);
       expect(encoding.getOverflowing()).toEqual([]);
@@ -174,6 +220,49 @@ describe("Tokenizer", () => {
     });
   });
 
+  describe("encodeTokenized", () => {
+    let tokenizer: Tokenizer;
+    let encodeTokenized: (
+      sequence: TokenizedSequence | TokenizedSequenceWithOffsets,
+      pair: number | undefined
+    ) => Promise<RawEncoding>;
+
+    beforeEach(() => {
+      const model = BPE.empty();
+      tokenizer = new Tokenizer(model);
+      tokenizer.addTokens(["my", "name", "is", "john", "pair"]);
+      encodeTokenized = promisify(tokenizer.encodeTokenized.bind(tokenizer));
+    });
+
+    it("accepts `undefined` as a second parameter", async () => {
+      const encoding = await encodeTokenized(["my", "name", "is", "john"], undefined);
+      expect(encoding).toBeDefined();
+    });
+  });
+
+  describe("encodeTokenizedBatch", () => {
+    let tokenizer: Tokenizer;
+    let encodeTokenizedBatch: (
+      sequence: (TokenizedSequence | TokenizedSequenceWithOffsets)[],
+      pair: number | undefined
+    ) => Promise<RawEncoding[]>;
+
+    beforeEach(() => {
+      const model = BPE.empty();
+      tokenizer = new Tokenizer(model);
+      tokenizer.addTokens(["my", "name", "is", "john", "pair"]);
+      encodeTokenizedBatch = promisify(tokenizer.encodeTokenizedBatch.bind(tokenizer));
+    });
+
+    it("accepts `undefined` as a second parameter", async () => {
+      const encoding = await encodeTokenizedBatch(
+        [["my", "name", "is", "john"]],
+        undefined
+      );
+      expect(encoding).toBeDefined();
+    });
+  });
+
   describe("decode", () => {
     let tokenizer: Tokenizer;
 
@@ -212,6 +301,28 @@ describe("Tokenizer", () => {
         "my name is john",
         "pair"
       ]);
+    });
+  });
+
+  describe("getVocab", () => {
+    it("accepts `undefined` as parameter", () => {
+      const model = BPE.empty();
+      const tokenizer = new Tokenizer(model);
+
+      expect(tokenizer.getVocab(undefined)).toBeDefined();
+    });
+
+    it("returns the vocabulary", () => {
+      const model = BPE.empty();
+      const tokenizer = new Tokenizer(model);
+      tokenizer.addTokens(["my", "name", "is", "john"]);
+
+      expect(tokenizer.getVocab(true)).toEqual({
+        my: 0,
+        name: 1,
+        is: 2,
+        john: 3
+      });
     });
   });
 
@@ -262,6 +373,48 @@ describe("Tokenizer", () => {
       tokenizer.setNormalizer(lowercaseNormalizer());
 
       expect(tokenizer.normalize("MY NAME IS JOHN")).toEqual("my name is john");
+    });
+  });
+
+  describe("postProcess", () => {
+    let tokenizer: Tokenizer;
+    let encode: (
+      sequence: string,
+      pair: string | null,
+      addSpecialTokens: boolean
+    ) => Promise<RawEncoding>;
+    let firstEncoding: RawEncoding;
+    let secondEncoding: RawEncoding;
+
+    beforeAll(() => {
+      const model = BPE.empty();
+      tokenizer = new Tokenizer(model);
+      tokenizer.addTokens(["my", "name", "is", "john", "pair"]);
+
+      encode = promisify(tokenizer.encode.bind(tokenizer));
+    });
+
+    beforeEach(async () => {
+      firstEncoding = await encode("my name is john", null, false);
+      secondEncoding = await encode("pair", null, false);
+
+      tokenizer.setTruncation(2);
+      tokenizer.setPadding({ maxLength: 5 });
+    });
+
+    it("returns correctly with a single Encoding param", () => {
+      const encoding = tokenizer.postProcess(firstEncoding);
+      expect(encoding.getTokens()).toEqual(["my", "name", "[PAD]", "[PAD]", "[PAD]"]);
+    });
+
+    it("returns correctly with `undefined` as second and third parameters", () => {
+      const encoding = tokenizer.postProcess(firstEncoding, undefined, undefined);
+      expect(encoding.getTokens()).toEqual(["my", "name", "[PAD]", "[PAD]", "[PAD]"]);
+    });
+
+    it("returns correctly with 2 encodings", () => {
+      const encoding = tokenizer.postProcess(firstEncoding, secondEncoding);
+      expect(encoding.getTokens()).toEqual(["my", "pair", "[PAD]", "[PAD]", "[PAD]"]);
     });
   });
 });

@@ -134,7 +134,7 @@ impl Model for WordLevel {
     fn tokenize(&self, tokens: Vec<(String, (usize, usize))>) -> Result<Vec<Token>> {
         let mut output_tokens = vec![];
 
-        for (token, initial_offsets) in tokens {
+        for (index, (token, initial_offsets)) in tokens.into_iter().enumerate() {
             let t = Token {
                 id: *self
                     .vocab
@@ -143,6 +143,7 @@ impl Model for WordLevel {
                     .ok_or(Error::MissingUnkToken)?,
                 value: token,
                 offsets: initial_offsets,
+                word: index as u32,
             };
 
             output_tokens.push(t);
@@ -157,6 +158,10 @@ impl Model for WordLevel {
 
     fn id_to_token(&self, id: u32) -> Option<String> {
         self.vocab_r.get(&id).cloned()
+    }
+
+    fn get_vocab(&self) -> &HashMap<String, u32> {
+        &self.vocab
     }
 
     fn get_vocab_size(&self) -> usize {

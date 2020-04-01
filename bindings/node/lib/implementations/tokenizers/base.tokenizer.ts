@@ -1,8 +1,11 @@
 import { promisify } from "util";
 
 import {
+  AddedToken,
   PaddingConfiguration,
   PaddingOptions,
+  TokenizedSequence,
+  TokenizedSequenceWithOffsets,
   Tokenizer,
   TruncationConfiguration,
   TruncationOptions
@@ -47,12 +50,9 @@ export class BaseTokenizer<TConfig extends object> {
    * Add the given tokens to the vocabulary
    *
    * @param tokens A list of tokens to add to the vocabulary.
-   * Each token can either be a string, or a tuple with a string representing the token,
-   * and a boolean option representing whether to match on single words only.
-   * If the boolean is not included, it defaults to False
-   * @returns The number of tokens that were added to the vocabulary
+   * Each token can either be a string, or an instance of AddedToken.
    */
-  addTokens(tokens: (string | [string, boolean])[]): number {
+  addTokens(tokens: (string | AddedToken)[]): number {
     return this.tokenizer.addTokens(tokens);
   }
 
@@ -60,10 +60,11 @@ export class BaseTokenizer<TConfig extends object> {
    * Add the given special tokens to the vocabulary, and treat them as special tokens.
    * The special tokens will never be processed by the model, and will be removed while decoding.
    *
-   * @param tokens The list of special tokens to add
+   * @param tokens The list of special tokens to add.
+   * Each token can either be a string, or an instance of AddedToken
    * @returns The number of tokens that were added to the vocabulary
    */
-  addSpecialTokens(tokens: string[]): number {
+  addSpecialTokens(tokens: (string | AddedToken)[]): number {
     return this.tokenizer.addSpecialTokens(tokens);
   }
 
@@ -97,6 +98,42 @@ export class BaseTokenizer<TConfig extends object> {
   ): Promise<Encoding[]> {
     const encodeBatch = promisify(this.tokenizer.encodeBatch.bind(this.tokenizer));
     const rawEncodings = await encodeBatch(sequences, addSpecialTokens);
+    return rawEncodings.map(e => new Encoding(e));
+  }
+
+  /**
+   * Encode the given tokens sequence
+   * @param sequence A sequence of tokens to encode.
+   * If the sequence is a `TokenizedSequence`, offsets will be automatically generated,
+   * making the hypothesis that all the tokens in the sequence are contiguous in the original string
+   * @param [typeId=0] The type id of the given sequence. Defaults to 0.
+   * @since 0.6.0
+   */
+  async encodeTokenized(
+    sequence: TokenizedSequence | TokenizedSequenceWithOffsets,
+    typeId?: number
+  ): Promise<Encoding> {
+    const encode = promisify(this.tokenizer.encodeTokenized.bind(this.tokenizer));
+    const rawEncoding = await encode(sequence, typeId);
+    return new Encoding(rawEncoding);
+  }
+
+  /**
+   * Encode the given tokens sequences
+   * @param sequences A list of sequences to encode.
+   * If a sequence is a `TokenizedSequence`, offsets will be automatically generated,
+   * making the hypothesis that all the tokens in the sequence are contiguous in the original string
+   * @param [typeId=0] The type id of the given sequences. Defaults to 0.
+   * @since 0.6.0
+   */
+  async encodeTokenizedBatch(
+    sequences: (TokenizedSequence | TokenizedSequenceWithOffsets)[],
+    typeId?: number
+  ): Promise<Encoding[]> {
+    const encodeBatch = promisify(
+      this.tokenizer.encodeTokenizedBatch.bind(this.tokenizer)
+    );
+    const rawEncodings = await encodeBatch(sequences, typeId);
     return rawEncodings.map(e => new Encoding(e));
   }
 
@@ -192,4 +229,33 @@ export class BaseTokenizer<TConfig extends object> {
   tokenToId(token: string): number | undefined {
     return this.tokenizer.tokenToId(token);
   }
+
+  /**
+   * Apply all the post-processing steps to the given encodings.
+   * The various steps are:
+   * 1. Truncate according to global params (@see setTruncation)
+   * 2. Apply the PostProcessor
+   * 3. Pad according to global params (@see setPadding)
+   * @param encoding The main Encoding to post process
+   * @param [pair] An optional pair Encoding
+   * @param [addSpecialTokens=true] Whether to add special tokens. Default to `true`.
+   * @since 0.6.0
+   */
+  postProcess(encoding: Encoding, pair?: Encoding, addSpecialTokens?: boolean): Encoding {
+    const rawEncoding = this.tokenizer.postProcess(
+      encoding.rawEncoding,
+      pair?.rawEncoding,
+      addSpecialTokens
+    );
+
+    return new Encoding(rawEncoding);
+  }
+}
+
+/**
+ * Get the string content from a token, which can be a string or AddedToken
+ * @param token The token from which get the content
+ */
+export function getTokenContent(token: string | AddedToken): string {
+  return typeof token === "string" ? token : token.getContent();
 }

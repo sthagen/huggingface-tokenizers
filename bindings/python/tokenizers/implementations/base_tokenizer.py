@@ -1,6 +1,9 @@
-from .. import Tokenizer, Encoding
+from tokenizers import Tokenizer, Encoding, AddedToken
+from tokenizers.models import TokenizedSequence, TokenizedSequenceWithOffsets
 
-from typing import List, Union, Tuple, Optional
+from typing import List, Union, Tuple, Optional, Dict
+
+Offsets = Tuple[int, int]
 
 
 class BaseTokenizer:
@@ -22,7 +25,19 @@ class BaseTokenizer:
         """
         return self._tokenizer.num_special_tokens_to_add(is_pair)
 
-    def get_vocab_size(self, with_added_tokens: bool = True):
+    def get_vocab(self, with_added_tokens: bool = True) -> Dict[str, int]:
+        """ Returns the vocabulary
+
+        Args:
+            with_added_tokens: boolean:
+                Whether to include the added tokens in the vocabulary
+
+        Returns:
+            The vocabulary
+        """
+        return self._tokenizer.get_vocab(with_added_tokens=with_added_tokens)
+
+    def get_vocab_size(self, with_added_tokens: bool = True) -> int:
         """ Return the size of vocabulary, with or without added tokens.
 
         Args:
@@ -95,30 +110,29 @@ class BaseTokenizer:
         """ Disable truncation """
         return self._tokenizer.no_truncation()
 
-    def add_tokens(self, tokens: List[Union[str, Tuple[str, bool]]]) -> int:
+    def add_tokens(self, tokens: List[Union[str, AddedToken]]) -> int:
         """ Add the given tokens to the vocabulary
 
         Args:
-            tokens: List[Union[str, Tuple[str, bool]]]:
+            tokens: List[Union[str, AddedToken]]:
                 A list of tokens to add to the vocabulary. Each token can either be
-                a string, or a tuple with a string representing the token, and a boolean
-                option representing whether to match on single words only.
-                If the boolean is not included, it defaults to False
+                a string, or an instance of AddedToken
 
         Returns:
             The number of tokens that were added to the vocabulary
         """
         return self._tokenizer.add_tokens(tokens)
 
-    def add_special_tokens(self, special_tokens: List[str]) -> int:
+    def add_special_tokens(self, special_tokens: List[Union[str, AddedToken]]) -> int:
         """ Add the given special tokens to the vocabulary, and treat them as special tokens.
 
         The special tokens will never be processed by the model, and will be
         removed while decoding.
 
         Args:
-            tokens: List[str]:
-                The list of special tokens to add
+            tokens: List[Union[str, AddedToken]]:
+                A list of special tokens to add to the vocabulary. Each token can either be
+                a string, or an instance of AddedToken
 
         Returns:
             The number of tokens that were added to the vocabulary
@@ -136,6 +150,61 @@ class BaseTokenizer:
             The normalized string
         """
         return self._tokenizer.normalize(sequence)
+
+    def encode_tokenized(
+        self, sequence: Union[TokenizedSequence, TokenizedSequenceWithOffsets], type_id: int = 0
+    ) -> Encoding:
+        """ Encode the given sequence. Let us skip the Normalizer and PreTokenizer by providing
+        already tokenized substrings.
+
+        A sequence can either be:
+            - `TokenizedSequence`: (`List[str]`)
+            - `TokenizedSequenceWithOffsets: (`List[Tuple[str, Offsets]]`) where Offsets is
+            a Tuple[int, int].
+
+        If the Offsets are not provided, they will be automatically generated, making the hypothesis
+        that all the tokens in the `TokenizedSequence` are contiguous in the original string.
+
+        Args:
+            sequence: Union[TokenizedSequence, TokenizedSequenceWithOffsets]
+                Either a TokenizedSequence or a TokenizedSequenceWithOffsets
+
+            type_id: int:
+                The type id of the given sequence
+
+        Returns:
+            An Encoding
+        """
+        return self._tokenizer.model.encode(sequence, type_id)
+
+    def encode_tokenized_batch(
+        self,
+        sequences: Union[List[TokenizedSequence], List[TokenizedSequenceWithOffsets]],
+        type_id: int = 0,
+    ) -> List[Encoding]:
+        """ Encode the given batch of sequence. Let us skip the Normalizer and PreTokenizer by
+        providing already tokenized substrings.
+
+        A sequence can either be:
+            - `TokenizedSequence`: (`List[str]`)
+            - `TokenizedSequenceWithOffsets: (`List[Tuple[str, Offsets]]`) where Offsets is
+            a Tuple[int, int].
+
+        If the Offsets are not provided, they will be automatically generated, making the hypothesis
+        that all the tokens in the `TokenizedSequence` are contiguous in the original string.
+
+        Args:
+            sequences: Union[List[TokenizedSequence], List[TokenizedSequenceWithOffsets]]
+                A list of sequence. Each sequence is either a TokenizedSequence or a
+                TokenizedSequenceWithOffsets
+
+            type_id: int:
+                The type if of the given sequence
+
+        Returns:
+            A list of Encoding
+        """
+        return self._tokenizer.model.encode_batch(sequences, type_id)
 
     def encode(
         self, sequence: str, pair: Optional[str] = None, add_special_tokens: bool = True
@@ -257,3 +326,28 @@ class BaseTokenizer:
                 The name of the tokenizer, to be used in the saved files
         """
         return self._tokenizer.model.save(directory, name=name)
+
+    def post_process(
+        self, encoding: Encoding, pair: Optional[Encoding] = None, add_special_tokens: bool = True
+    ) -> Encoding:
+        """ Apply all the post-processing steps to the given encodings.
+
+        The various steps are:
+            1. Truncate according to global params (provided to `enable_truncation`)
+            2. Apply the PostProcessor
+            3. Pad according to global params. (provided to `enable_padding`)
+
+        Args:
+            encoding: Encoding:
+                The main Encoding to post process
+
+            pair: Optional[Encoding]:
+                An optional pair Encoding
+
+            add_special_tokens: bool:
+                Whether to add special tokens
+
+        Returns:
+            The resulting Encoding
+        """
+        return self._tokenizer.post_process(encoding, pair, add_special_tokens)

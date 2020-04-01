@@ -1,12 +1,15 @@
 [package]
 name = "tokenizers-python"
-version = "0.6.0"
+version = "0.7.0-rc3"
 authors = ["Anthony MOI <m.anthony.moi@gmail.com>"]
 edition = "2018"
 
 [lib]
 name = "tokenizers"
 crate-type = ["cdylib"]
+
+[dependencies]
+rayon = "1.2.0"
 
 [dependencies.pyo3]
 version = "0.8.4"
