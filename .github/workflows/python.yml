@@ -2,6 +2,11 @@ name: Python
 
 on:
   push:
+    branches:
+      - master
+    paths-ignore:
+      - bindings/node/**
+  pull_request:
     paths-ignore:
       - bindings/node/**
 
@@ -37,6 +42,7 @@ jobs:
         uses: actions-rs/toolchain@v1
         with:
           toolchain: nightly
+          components: rustfmt
 
       # Necessary for now for the cargo cache: https://github.com/actions/cache/issues/133#issuecomment-599102035
       - run: sudo chown -R $(whoami):$(id -ng) ~/.cargo/
@@ -53,16 +59,24 @@ jobs:
           path: ./bindings/python/target
           key: ${{ runner.os }}-cargo-python-build-${{ hashFiles('**/Cargo.toml') }}
 
-      - name: Build
-        uses: actions-rs/cargo@v1
-        with:
-          toolchain: nightly
-          command: build
-          args: --verbose --manifest-path ./bindings/python/Cargo.toml
-
       - name: Lint with RustFmt
         uses: actions-rs/cargo@v1
         with:
           toolchain: nightly
           command: fmt
           args: --manifest-path ./bindings/python/Cargo.toml -- --check
+
+      - name: Install Python
+        uses: actions/setup-python@v1
+        with:
+          python-version: 3.6
+          architecture: "x64"
+
+      - name: Run tests
+        working-directory: ./bindings/python
+        run: |
+          python -m venv .env
+          source .env/bin/activate
+          pip install pytest requests maturin
+          maturin develop --release
+          make test
