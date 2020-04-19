@@ -11,9 +11,10 @@ class TestBertProcessing:
         processor = BertProcessing(("[SEP]", 0), ("[CLS]", 1))
         assert processor is not None
         assert isinstance(processor, PostProcessor)
+        assert isinstance(processor, BertProcessing)
 
     def test_processing(self):
-        tokenizer = Tokenizer(BPE.empty())
+        tokenizer = Tokenizer(BPE())
         tokenizer.add_special_tokens(["[SEP]", "[CLS]"])
         tokenizer.add_tokens(["my", "name", "is", "john", "pair"])
         tokenizer.post_processor = BertProcessing(("[SEP]", 0), ("[CLS]", 1))
@@ -28,9 +29,10 @@ class TestRobertaProcessing:
         processor = RobertaProcessing(("</s>", 1), ("<s>", 0))
         assert processor is not None
         assert isinstance(processor, PostProcessor)
+        assert isinstance(processor, RobertaProcessing)
 
     def test_processing(self):
-        tokenizer = Tokenizer(BPE.empty())
+        tokenizer = Tokenizer(BPE())
         tokenizer.add_special_tokens(["<s>", "</s>"])
         tokenizer.add_tokens(["my", "name", "is", "john", "pair"])
         tokenizer.post_processor = RobertaProcessing(("</s>", 1), ("<s>", 0))
@@ -45,9 +47,10 @@ class TestByteLevelProcessing:
         assert ByteLevel() is not None
         assert ByteLevel(trim_offsets=True) is not None
         assert isinstance(ByteLevel(), PostProcessor)
+        assert isinstance(ByteLevel(), ByteLevel)
 
     def test_processing(self, roberta_files):
-        tokenizer = Tokenizer(BPE.from_files(roberta_files["vocab"], roberta_files["merges"]))
+        tokenizer = Tokenizer(BPE(roberta_files["vocab"], roberta_files["merges"]))
         tokenizer.pre_tokenizer = ByteLevelPreTokenizer(add_prefix_space=True)
 
         # Keeps original offsets

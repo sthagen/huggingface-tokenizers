@@ -40,7 +40,7 @@ impl PySequenceProtocol for Encoding {
 impl Encoding {
     #[staticmethod]
     #[args(growing_offsets = true)]
-    fn merge(encodings: Vec<&Encoding>, growing_offsets: bool) -> Encoding {
+    fn merge(encodings: Vec<PyRef<Encoding>>, growing_offsets: bool) -> Encoding {
         Encoding::new(tk::tokenizer::Encoding::merge(
             encodings
                 .into_iter()
@@ -62,7 +62,7 @@ impl Encoding {
     }
 
     #[getter]
-    fn get_words(&self) -> Vec<u32> {
+    fn get_words(&self) -> Vec<Option<u32>> {
         self.encoding.get_words().to_vec()
     }
 
@@ -96,20 +96,28 @@ impl Encoding {
             .collect()
     }
 
-    fn char_to_word_offsets(&self, pos: usize) -> Option<Offsets> {
-        self.encoding.char_to_word_offsets(pos)
+    fn word_to_tokens(&self, word_index: u32) -> Option<(usize, usize)> {
+        self.encoding.word_to_tokens(word_index)
     }
 
-    fn char_to_token_offsets(&self, pos: usize) -> Option<Offsets> {
-        self.encoding.char_to_token_offsets(pos)
+    fn word_to_chars(&self, word_index: u32) -> Option<Offsets> {
+        self.encoding.word_to_chars(word_index)
     }
 
-    fn token_to_word_offsets(&self, index: usize) -> Option<Offsets> {
-        self.encoding.token_to_word_offsets(index)
+    fn token_to_chars(&self, token_index: usize) -> Option<Offsets> {
+        self.encoding.token_to_chars(token_index)
     }
 
-    fn char_to_token(&self, pos: usize) -> Option<usize> {
-        self.encoding.char_to_token(pos)
+    fn token_to_word(&self, token_index: usize) -> Option<u32> {
+        self.encoding.token_to_word(token_index)
+    }
+
+    fn char_to_token(&self, char_pos: usize) -> Option<usize> {
+        self.encoding.char_to_token(char_pos)
+    }
+
+    fn char_to_word(&self, char_pos: usize) -> Option<u32> {
+        self.encoding.char_to_word(char_pos)
     }
 
     #[args(kwargs = "**")]

@@ -6,7 +6,7 @@ use pyo3::types::*;
 
 #[pyclass(dict)]
 pub struct PostProcessor {
-    pub processor: Container<dyn tk::tokenizer::PostProcessor + Sync>,
+    pub processor: Container<dyn tk::tokenizer::PostProcessor>,
 }
 
 #[pymethods]
@@ -21,12 +21,15 @@ pub struct BertProcessing {}
 #[pymethods]
 impl BertProcessing {
     #[new]
-    fn new(obj: &PyRawObject, sep: (String, u32), cls: (String, u32)) -> PyResult<()> {
-        Ok(obj.init(PostProcessor {
-            processor: Container::Owned(Box::new(tk::processors::bert::BertProcessing::new(
-                sep, cls,
-            ))),
-        }))
+    fn new(sep: (String, u32), cls: (String, u32)) -> PyResult<(Self, PostProcessor)> {
+        Ok((
+            BertProcessing {},
+            PostProcessor {
+                processor: Container::Owned(Box::new(tk::processors::bert::BertProcessing::new(
+                    sep, cls,
+                ))),
+            },
+        ))
     }
 }
 
@@ -35,12 +38,23 @@ pub struct RobertaProcessing {}
 #[pymethods]
 impl RobertaProcessing {
     #[new]
-    fn new(obj: &PyRawObject, sep: (String, u32), cls: (String, u32)) -> PyResult<()> {
-        Ok(obj.init(PostProcessor {
-            processor: Container::Owned(Box::new(tk::processors::roberta::RobertaProcessing::new(
-                sep, cls,
-            ))),
-        }))
+    #[args(trim_offsets = true, add_prefix_space = true)]
+    fn new(
+        sep: (String, u32),
+        cls: (String, u32),
+        trim_offsets: bool,
+        add_prefix_space: bool,
+    ) -> PyResult<(Self, PostProcessor)> {
+        Ok((
+            RobertaProcessing {},
+            PostProcessor {
+                processor: Container::Owned(Box::new(
+                    tk::processors::roberta::RobertaProcessing::new(sep, cls)
+                        .trim_offsets(trim_offsets)
+                        .add_prefix_space(add_prefix_space),
+                )),
+            },
+        ))
     }
 }
 
@@ -50,7 +64,7 @@ pub struct ByteLevel {}
 impl ByteLevel {
     #[new]
     #[args(kwargs = "**")]
-    fn new(obj: &PyRawObject, kwargs: Option<&PyDict>) -> PyResult<()> {
+    fn new(kwargs: Option<&PyDict>) -> PyResult<(Self, PostProcessor)> {
         let mut byte_level = tk::processors::byte_level::ByteLevel::default();
 
         if let Some(kwargs) = kwargs {
@@ -62,8 +76,11 @@ impl ByteLevel {
                 }
             }
         }
-        Ok(obj.init(PostProcessor {
-            processor: Container::Owned(Box::new(byte_level)),
-        }))
+        Ok((
+            ByteLevel {},
+            PostProcessor {
+                processor: Container::Owned(Box::new(byte_level)),
+            },
+        ))
     }
 }

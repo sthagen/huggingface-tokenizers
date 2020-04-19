@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.7.0-rc3]
+## [0.7.0]
 
 ### Changed
 - Only one progress bar while reading files during training. This is better for use-cases with
@@ -20,16 +20,23 @@ normalized one anymore.
 - The added token given to `add_special_tokens` or `add_tokens` on a `Tokenizer`, or while using
 `train(special_tokens=...)` can now be instances of `AddedToken` to provide more control over these
 tokens.
+- [#136]: Updated Pyo3 version
+- [#136]: Static methods `Model.from_files` and `Model.empty` are removed in favor of using
+constructors.
+- [#239]: `CharBPETokenizer` now corresponds to OpenAI GPT BPE implementation by default.
 
 ### Added
 - [#188]: `ByteLevel` is also a `PostProcessor` now and handles trimming the offsets if activated.
 This avoids the unintuitive inclusion of the whitespaces in the produced offsets, even if these
 whitespaces are part of the actual token.
 It has been added to `ByteLevelBPETokenizer` but it is off by default (`trim_offsets=False`).
-- More alignment mappings on the `Encoding`.
+- [#236]: `RobertaProcessing` also handles trimming the offsets.
+- [#234]: New alignment mappings on the `Encoding`. Provide methods to easily convert between `char`
+or `word` (input space) and `token` (output space).
 - `post_process` can be called on the `Tokenizer`
 - [#208]: Ability to retrieve the vocabulary from the `Tokenizer` with
 `get_vocab(with_added_tokens: bool)`
+- [#136] Models can now be instantiated through object constructors.
 
 ### Fixed
 - [#193]: Fix some issues with the offsets being wrong with the `ByteLevel` BPE:
@@ -51,6 +58,10 @@ of `encode` so it didn't make sense to keep it here.
 are now relative to the original string by default.
 - Access to the `normalized_str` on the `Encoding` has been removed. Can be retrieved by calling
 `normalize(sequence)` on the `Tokenizer`
+- Change `Model.from_files` and `Model.empty` to use constructor. The model constructor should take
+the same arguments as the old methods. (ie `BPE(vocab, merges)` or `BPE()`)
+- If you were using the `CharBPETokenizer` and want to keep the same behavior as before, set
+`bert_normalizer=False` and `split_on_whitespace_only=True`.
 
 ## [0.6.0]
 
@@ -151,7 +162,11 @@ delimiter (Works like `.split(delimiter)`)
 - Fix a bug with the IDs associated with added tokens.
 - Fix a bug that was causing crashes in Python 3.5
 
+[#239]: https://github.com/huggingface/tokenizers/pull/239
+[#236]: https://github.com/huggingface/tokenizers/pull/236
+[#234]: https://github.com/huggingface/tokenizers/pull/234
 [#208]: https://github.com/huggingface/tokenizers/pull/208
+[#205]: https://github.com/huggingface/tokenizers/issues/205
 [#197]: https://github.com/huggingface/tokenizers/pull/197
 [#193]: https://github.com/huggingface/tokenizers/pull/193
 [#190]: https://github.com/huggingface/tokenizers/pull/190
