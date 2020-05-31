@@ -1,10 +1,10 @@
 use crate::tokenizer::{
     Decoder, Encoding, NormalizedString, Offsets, PostProcessor, PreTokenizer, Result,
 };
+use onig::Regex;
 use rayon::prelude::*;
-use regex::Regex;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use unicode_categories::UnicodeCategories;
 
 fn bytes_char() -> HashMap<u8, char> {
     let mut bs: Vec<u8> = vec![];
@@ -31,12 +31,14 @@ fn bytes_char() -> HashMap<u8, char> {
 
 lazy_static! {
     static ref RE: Regex =
-        Regex::new(r"'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+").unwrap();
+        Regex::new(r"'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+")
+            .unwrap();
     static ref BYTES_CHAR: HashMap<u8, char> = bytes_char();
     static ref CHAR_BYTES: HashMap<char, u8> =
         bytes_char().into_iter().map(|(c, b)| (b, c)).collect();
 }
 
+#[derive(Serialize, Deserialize)]
 /// Provides all the necessary steps to handle the BPE tokenization at the byte-level. Takes care
 /// of all the required processing steps to transform a UTF-8 string as needed before and after the
 /// BPE model does its job.
@@ -82,6 +84,7 @@ impl ByteLevel {
 /// As a `PreTokenizer`, `ByteLevel` is in charge of transforming all the unicode characters into
 /// their byte-level counterpart. It also splits the input according to the configured regex.
 // TODO: Give the ability to modify this regex
+#[typetag::serde]
 impl PreTokenizer for ByteLevel {
     fn pre_tokenize(&self, normalized: &mut NormalizedString) -> Result<Vec<(String, Offsets)>> {
         if self.add_prefix_space && !normalized.get().starts_with(' ') {
@@ -89,34 +92,8 @@ impl PreTokenizer for ByteLevel {
         }
 
         let positions = RE
-            .captures_iter(normalized.get())
-            .map(|capture| {
-                let s = normalized.get();
-                let capture = capture.get(0).unwrap();
-                let start = capture.start();
-                let end = capture.end();
-
-                // if our last character is a whitespace, followed by a non whitespace,
-                // we don't want to return it
-                let last = s[start..end].chars().last();
-                let next = s[end..].chars().next();
-                if let (Some(last), Some(next)) = (last, next) {
-                    if last.is_separator_space() && !next.is_separator_space() {
-                        return start..end - last.len_utf8();
-                    }
-                }
-                // if our first char is not a whitespace but the previous one was, we return
-                // a whitespace before our match
-                let prev = s[0..start].chars().last();
-                let current = s[start..end].chars().next().map(|c| c.is_whitespace());
-                if let (Some(prev), Some(current)) = (prev, current) {
-                    if prev.is_separator_space() && !current {
-                        return start - prev.len_utf8()..end;
-                    }
-                }
-
-                start..end
-            })
+            .find_iter(normalized.get())
+            .map(|(start, end)| start..end)
             .collect::<Vec<_>>();
 
         let splits = positions
@@ -174,6 +151,7 @@ impl PreTokenizer for ByteLevel {
 
 /// As a `Decoder`, `ByteLevel` is in charge of converting any byte-level characters to their
 /// unicode counterpart, before merging everything back into a single String.
+#[typetag::serde]
 impl Decoder for ByteLevel {
     fn decode(&self, tokens: Vec<String>) -> Result<String> {
         Ok(String::from_utf8_lossy(
@@ -188,6 +166,7 @@ impl Decoder for ByteLevel {
 }
 
 /// As a `PostProcessor`, `ByteLevel` is in charge of trimming the offsets if necessary.
+#[typetag::serde]
 impl PostProcessor for ByteLevel {
     fn added_tokens(&self, _is_pair: bool) -> usize {
         0

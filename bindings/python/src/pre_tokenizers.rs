@@ -5,9 +5,10 @@ use super::utils::Container;
 use pyo3::exceptions;
 use pyo3::prelude::*;
 use pyo3::types::*;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use tk::tokenizer::{Offsets, Result};
 
-#[pyclass(dict)]
+#[pyclass(dict, module = "tokenizers.pre_tokenizers")]
 pub struct PreTokenizer {
     pub pretok: Container<dyn tk::tokenizer::PreTokenizer>,
 }
@@ -21,6 +22,35 @@ impl PreTokenizer {
         })
     }
 
+    fn __getstate__(&self, py: Python) -> PyResult<PyObject> {
+        let data = self
+            .pretok
+            .execute(|pretok| serde_json::to_string(&pretok))
+            .map_err(|e| {
+                exceptions::Exception::py_err(format!(
+                    "Error while attempting to pickle PreTokenizer: {}",
+                    e.to_string()
+                ))
+            })?;
+        Ok(PyBytes::new(py, data.as_bytes()).to_object(py))
+    }
+
+    fn __setstate__(&mut self, py: Python, state: PyObject) -> PyResult<()> {
+        match state.extract::<&PyBytes>(py) {
+            Ok(s) => {
+                self.pretok =
+                    Container::Owned(serde_json::from_slice(s.as_bytes()).map_err(|e| {
+                        exceptions::Exception::py_err(format!(
+                            "Error while attempting to unpickle PreTokenizer: {}",
+                            e.to_string()
+                        ))
+                    })?);
+                Ok(())
+            }
+            Err(e) => Err(e),
+        }
+    }
+
     fn pre_tokenize(&self, s: &str) -> PyResult<Vec<(String, Offsets)>> {
         // TODO: Expose the NormalizedString
         let mut normalized = tk::tokenizer::NormalizedString::from(s);
@@ -32,7 +62,7 @@ impl PreTokenizer {
     }
 }
 
-#[pyclass(extends=PreTokenizer)]
+#[pyclass(extends=PreTokenizer, module = "tokenizers.pre_tokenizers")]
 pub struct ByteLevel {}
 #[pymethods]
 impl ByteLevel {
@@ -69,7 +99,7 @@ impl ByteLevel {
     }
 }
 
-#[pyclass(extends=PreTokenizer)]
+#[pyclass(extends=PreTokenizer, module = "tokenizers.pre_tokenizers")]
 pub struct Whitespace {}
 #[pymethods]
 impl Whitespace {
@@ -84,7 +114,7 @@ impl Whitespace {
     }
 }
 
-#[pyclass(extends=PreTokenizer)]
+#[pyclass(extends=PreTokenizer, module = "tokenizers.pre_tokenizers")]
 pub struct WhitespaceSplit {}
 #[pymethods]
 impl WhitespaceSplit {
@@ -99,7 +129,7 @@ impl WhitespaceSplit {
     }
 }
 
-#[pyclass(extends=PreTokenizer)]
+#[pyclass(extends=PreTokenizer, module = "tokenizers.pre_tokenizers")]
 pub struct CharDelimiterSplit {}
 #[pymethods]
 impl CharDelimiterSplit {
@@ -120,9 +150,13 @@ impl CharDelimiterSplit {
             },
         ))
     }
+
+    fn __getnewargs__<'p>(&self, py: Python<'p>) -> PyResult<&'p PyTuple> {
+        Ok(PyTuple::new(py, &[" "]))
+    }
 }
 
-#[pyclass(extends=PreTokenizer)]
+#[pyclass(extends=PreTokenizer, module = "tokenizers.pre_tokenizers")]
 pub struct BertPreTokenizer {}
 #[pymethods]
 impl BertPreTokenizer {
@@ -137,7 +171,7 @@ impl BertPreTokenizer {
     }
 }
 
-#[pyclass(extends=PreTokenizer)]
+#[pyclass(extends=PreTokenizer, module = "tokenizers.pre_tokenizers")]
 pub struct Metaspace {}
 #[pymethods]
 impl Metaspace {
@@ -175,7 +209,6 @@ impl Metaspace {
     }
 }
 
-/// Attempt at providing Python the ability to give its own PreTokenizer
 struct PyPreTokenizer {
     class: PyObject,
 }
@@ -186,6 +219,7 @@ impl PyPreTokenizer {
     }
 }
 
+#[typetag::serde]
 impl tk::tokenizer::PreTokenizer for PyPreTokenizer {
     fn pre_tokenize(
         &self,
@@ -214,5 +248,25 @@ impl tk::tokenizer::PreTokenizer for PyPreTokenizer {
                 )))
             }
         }
+    }
+}
+
+impl Serialize for PyPreTokenizer {
+    fn serialize<S>(&self, _serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        Err(serde::ser::Error::custom(
+            "Custom PyPreTokenizer cannot be serialized",
+        ))
+    }
+}
+
+impl<'de> Deserialize<'de> for PyPreTokenizer {
+    fn deserialize<D>(_deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        unimplemented!("PyPreTokenizer cannot be deserialized")
     }
 }

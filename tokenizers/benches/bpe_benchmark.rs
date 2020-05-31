@@ -3,12 +3,13 @@ extern crate criterion;
 
 use criterion::{black_box, Criterion};
 use std::fs::File;
-use std::io::{self, BufRead, BufReader};
+use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::time::{Duration, Instant};
-use tokenizers::models::bpe::BPE;
+use tokenizers::models::bpe::{BpeTrainerBuilder, BPE};
 use tokenizers::pre_tokenizers::byte_level::ByteLevel;
-use tokenizers::tokenizer::{AddedToken, EncodeInput, Tokenizer};
+use tokenizers::pre_tokenizers::whitespace::Whitespace;
+use tokenizers::tokenizer::{AddedToken, EncodeInput, Tokenizer, Trainer};
 
 static BATCH_SIZE: usize = 1_000;
 
@@ -21,10 +22,6 @@ fn create_gpt2_tokenizer(bpe: BPE) -> Tokenizer {
         AddedToken::from(String::from("[ENT]")).single_word(true),
     ]);
     tokenizer
-}
-
-fn line_to_input(line: io::Result<String>) -> EncodeInput {
-    EncodeInput::Single(line.unwrap())
 }
 
 fn iter_bench_encode(iters: u64, tokenizer: &Tokenizer, lines: &[EncodeInput]) -> Duration {
@@ -68,10 +65,8 @@ fn bench_gpt2(c: &mut Criterion) {
     let tokenizer = create_gpt2_tokenizer(bpe);
     let mut lines: Vec<EncodeInput> = vec![];
     let mut batches: Vec<Vec<EncodeInput>> = vec![vec![]];
-    for line in BufReader::new(File::open(Path::new("data/big.txt")).unwrap())
-        .lines()
-        .map(line_to_input)
-    {
+    for line in BufReader::new(File::open(Path::new("data/big.txt")).unwrap()).lines() {
+        let line: EncodeInput = line.unwrap().into();
         lines.push(line.clone());
         if batches.last().unwrap().len() >= BATCH_SIZE {
             batches.push(vec![]);
@@ -102,9 +97,59 @@ fn bench_gpt2(c: &mut Criterion) {
     });
 }
 
+#[allow(clippy::borrowed_box)]
+fn iter_bench_train(
+    iters: u64,
+    tokenizer: &mut Tokenizer,
+    trainer: &Box<dyn Trainer>,
+    files: Vec<String>,
+) -> Duration {
+    let mut duration = Duration::new(0, 0);
+    for _i in 0..iters {
+        let start = Instant::now();
+        let _ = black_box(tokenizer.train(&trainer, files.clone()));
+        duration = duration.checked_add(start.elapsed()).unwrap();
+    }
+    duration
+}
+
+fn bench_train(c: &mut Criterion) {
+    let mut tokenizer = Tokenizer::new(Box::new(BPE::default()));
+    tokenizer.with_pre_tokenizer(Box::new(Whitespace));
+
+    let trainer: Box<dyn Trainer> =
+        Box::new(BpeTrainerBuilder::default().show_progress(false).build());
+    c.bench_function("BPE Train vocabulary (small)", |b| {
+        b.iter_custom(|iters| {
+            iter_bench_train(
+                iters,
+                &mut tokenizer,
+                &trainer,
+                vec!["data/small.txt".to_string()],
+            )
+        })
+    });
+
+    c.bench_function("BPE Train vocabulary (big)", |b| {
+        b.iter_custom(|iters| {
+            iter_bench_train(
+                iters,
+                &mut tokenizer,
+                &trainer,
+                vec!["data/big.txt".to_string()],
+            )
+        })
+    });
+}
+
 criterion_group! {
     name = benches;
     config = Criterion::default().sample_size(20);
     targets = bench_gpt2
 }
-criterion_main!(benches);
+criterion_group! {
+    name = benches_train;
+    config = Criterion::default().sample_size(10);
+    targets = bench_train
+}
+criterion_main!(benches, benches_train);

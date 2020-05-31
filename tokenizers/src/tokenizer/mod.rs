@@ -9,32 +9,39 @@
 //!   - [`PostProcessor`](trait.PostProcessor.html): Takes care of the processing after tokenization (like truncating, padding,
 //!   ...).
 
+pub use crate::utils::iter::LinesWithEnding;
 use crate::utils::iter::ResultShunt;
 pub use crate::utils::padding::{pad_encodings, PaddingDirection, PaddingParams, PaddingStrategy};
 pub use crate::utils::truncation::{truncate_encodings, TruncationParams, TruncationStrategy};
 use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
     fs::File,
-    io::{BufRead, BufReader},
+    io::prelude::*,
+    io::BufReader,
     path::{Path, PathBuf},
 };
 
 mod encoding;
 mod normalizer;
+mod serialization;
 
 pub use encoding::*;
 pub use normalizer::*;
 
-pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
+pub type Error = Box<dyn std::error::Error + Send + Sync>;
+pub type Result<T> = std::result::Result<T, Error>;
 pub type Offsets = (usize, usize);
 
+#[typetag::serde(tag = "type")]
 /// Takes care of pre-processing strings.
 pub trait Normalizer: Send + Sync {
     fn normalize(&self, normalized: &mut NormalizedString) -> Result<()>;
 }
 
+#[typetag::serde(tag = "type")]
 /// The `PreTokenizer` is in charge of doing the pre-segmentation step. It splits the given string
 /// in multiple substrings, keeping track of the offsets of said substrings from the
 /// `NormalizedString`. In some occasions, the `PreTokenizer` might need to modify the given
@@ -44,6 +51,7 @@ pub trait PreTokenizer: Send + Sync {
     fn pre_tokenize(&self, normalized: &mut NormalizedString) -> Result<Vec<(String, Offsets)>>;
 }
 
+#[typetag::serde(tag = "type")]
 /// Represents a model used during Tokenization (like BPE or Word or Unigram).
 pub trait Model: Send + Sync {
     fn tokenize(&self, tokens: Vec<(String, Offsets)>) -> Result<Vec<Token>>;
@@ -54,6 +62,7 @@ pub trait Model: Send + Sync {
     fn save(&self, folder: &Path, name: Option<&str>) -> Result<Vec<PathBuf>>;
 }
 
+#[typetag::serde(tag = "type")]
 /// A `PostProcessor` has the responsibility to post process an encoded output of the `Tokenizer`.
 /// It adds any special tokens that a language model would require.
 pub trait PostProcessor: Send + Sync {
@@ -83,6 +92,7 @@ impl dyn PostProcessor {
     }
 }
 
+#[typetag::serde(tag = "type")]
 /// A `Decoder` has the responsibility to merge the given `Vec<String>` in a `String`.
 pub trait Decoder: Send + Sync {
     fn decode(&self, tokens: Vec<String>) -> Result<String>;
@@ -119,12 +129,60 @@ impl Token {
 }
 
 #[derive(Debug, Clone)]
-pub enum EncodeInput {
-    Single(String),
-    Dual(String, String),
+pub enum InputSequence {
+    Raw(String),
+    PreTokenized(Vec<String>),
+}
+
+impl From<String> for InputSequence {
+    fn from(input: String) -> Self {
+        InputSequence::Raw(input)
+    }
+}
+
+impl From<&str> for InputSequence {
+    fn from(input: &str) -> Self {
+        InputSequence::Raw(input.to_owned())
+    }
+}
+
+impl From<Vec<String>> for InputSequence {
+    fn from(input: Vec<String>) -> Self {
+        InputSequence::PreTokenized(input)
+    }
+}
+
+impl From<&[String]> for InputSequence {
+    fn from(input: &[String]) -> Self {
+        InputSequence::PreTokenized(input.to_vec())
+    }
+}
+
+impl From<&[&str]> for InputSequence {
+    fn from(input: &[&str]) -> Self {
+        InputSequence::PreTokenized(input.iter().map(|&i| i.to_string()).collect())
+    }
 }
 
 #[derive(Debug, Clone)]
+pub enum EncodeInput {
+    Single(InputSequence),
+    Dual(InputSequence, InputSequence),
+}
+
+impl<I: Into<InputSequence>> From<I> for EncodeInput {
+    fn from(input: I) -> Self {
+        EncodeInput::Single(input.into())
+    }
+}
+
+impl<I1: Into<InputSequence>, I2: Into<InputSequence>> From<(I1, I2)> for EncodeInput {
+    fn from(input: (I1, I2)) -> Self {
+        EncodeInput::Dual(input.0.into(), input.1.into())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AddedToken {
     /// The content of the added token
     pub content: String,
@@ -247,12 +305,20 @@ pub struct Tokenizer {
     split_re: regex::RegexSet,
 
     // General processing parameters
-    trunc: Option<TruncationParams>,
+    truncation: Option<TruncationParams>,
     padding: Option<PaddingParams>,
 }
 
+impl std::str::FromStr for Tokenizer {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self> {
+        Ok(serde_json::from_str(s)?)
+    }
+}
+
 impl Tokenizer {
-    /// Instanciate a new Tokenizer, with the given Model
+    /// Instantiate a new Tokenizer, with the given Model
     pub fn new(model: Box<dyn Model>) -> Self {
         Tokenizer {
             normalizer: None,
@@ -268,9 +334,35 @@ impl Tokenizer {
             special_tokens_set: HashSet::new(),
             split_re: regex::RegexSet::new::<_, &&str>(&[]).unwrap(),
 
-            trunc: None,
+            truncation: None,
             padding: None,
         }
+    }
+
+    /// Instantiate a new Tokenizer from the given file
+    pub fn from_file<P: AsRef<Path>>(file: P) -> Result<Self> {
+        let file = File::open(file)?;
+        let buf = BufReader::new(file);
+        Ok(serde_json::from_reader(buf)?)
+    }
+
+    /// Serialize the current tokenizer as a String
+    pub fn to_string(&self, pretty: bool) -> Result<String> {
+        Ok(if pretty {
+            serde_json::to_string_pretty(self)?
+        } else {
+            serde_json::to_string(self)?
+        })
+    }
+
+    /// Save the current tokenizer at the given path
+    pub fn save(&self, path: &str, pretty: bool) -> Result<()> {
+        let serialized = self.to_string(pretty)?;
+
+        let mut file = File::create(path)?;
+        file.write_all(&serialized.as_bytes())?;
+
+        Ok(())
     }
 
     /// Set the normalizer
@@ -335,7 +427,7 @@ impl Tokenizer {
 
     /// Set the truncation parameters
     pub fn with_truncation(&mut self, trunc: Option<TruncationParams>) -> &Self {
-        self.trunc = trunc;
+        self.truncation = trunc;
         self
     }
 
@@ -413,16 +505,19 @@ impl Tokenizer {
         Ok(normalized)
     }
 
-    /// Encode the given sentence
-    pub fn encode(&self, input: EncodeInput, add_special_tokens: bool) -> Result<Encoding> {
-        let generate_output = move |sentence: String, type_id: u32| -> Result<Encoding> {
-            // First we need to split into as many sequences as needed to avoid splitting
-            // on our added tokens
-            let results = self.split_on_added_tokens(&sentence).into_iter().map(
+    /// Encode a single sequence
+    fn encode_single_sequence(&self, sequence: InputSequence, type_id: u32) -> Result<Encoding> {
+        let (sequence, pre_tokenized) = match sequence {
+            InputSequence::PreTokenized(seq) => (seq, true),
+            InputSequence::Raw(seq) => (vec![seq], false),
+        };
+
+        let mut sequence_encodings = vec![];
+        for subseq in sequence {
+            let results = self.split_on_added_tokens(&subseq).into_iter().map(
                 |(sentence, id)| -> Result<(Encoding, NormalizedString)> {
-                    // If this is one of our added tokens, lets return an encoding directly
                     if let Some(id) = id {
-                        return Ok((
+                        Ok((
                             Encoding::new(
                                 vec![id],
                                 vec![type_id],
@@ -434,34 +529,31 @@ impl Tokenizer {
                                 vec![],
                             ),
                             sentence,
-                        ));
+                        ))
+                    } else {
+                        // 1. Normalization
+                        let mut normalized = self.do_normalize(sentence)?;
+                        // 2. Pre tokenization
+                        let pre_tokenized = self.pre_tokenize(&mut normalized)?;
+                        // 3. Model
+                        let tokens = self.model.tokenize(pre_tokenized)?;
+                        let encoding = Encoding::from_tokens(tokens, type_id);
+
+                        Ok((encoding, normalized))
                     }
-
-                    // 1. Normalization
-                    let mut normalized = self.do_normalize(sentence)?;
-
-                    // 2. Pre tokenization
-                    let pre_tokenized = self.pre_tokenize(&mut normalized)?;
-
-                    // 3. Model
-                    let tokens = self.model.tokenize(pre_tokenized)?;
-                    let encoding = Encoding::from_tokens(tokens, type_id);
-
-                    Ok((encoding, normalized))
                 },
             );
 
-            let (encodings, normalized) =
+            let (all_encodings, all_normalized) =
                 ResultShunt::process(results, |iter| iter.unzip::<_, _, Vec<_>, Vec<_>>())?;
-            if encodings.is_empty() {
+            if all_encodings.is_empty() {
                 return Ok(Encoding::default());
             }
 
             let mut final_encoding = Encoding::default();
-            let mut final_normalized = NormalizedString::default();
 
-            let mut offset = final_normalized.len_original();
-            for (mut encoding, normalized) in encodings.into_iter().zip(normalized) {
+            let mut offset = 0; //final_normalized.len_original();
+            for (mut encoding, normalized) in all_encodings.into_iter().zip(all_normalized) {
                 encoding
                     .get_offsets_mut()
                     .iter_mut()
@@ -478,31 +570,62 @@ impl Tokenizer {
                 offset += normalized.len_original();
 
                 final_encoding.merge_with(encoding, false);
-                final_normalized.merge_with(&normalized);
             }
 
-            Ok(final_encoding)
-        };
+            sequence_encodings.push(final_encoding);
+        }
 
-        let (sentence, pair) = match input {
+        Ok(Encoding::merge(&sequence_encodings, !pre_tokenized))
+    }
+
+    /// Encode the given input. This method accepts both single sequences, as well as pair
+    /// sequences. Also, a sequence can be a string, or already pre-tokenized input directly:
+    ///
+    /// ```
+    /// # use tokenizers::Tokenizer;
+    /// # use tokenizers::models::bpe::BPE;
+    /// # let tokenizer = Tokenizer::new(Box::new(BPE::default()));
+    /// #
+    /// // Sequences:
+    /// tokenizer.encode("Single sequence", false);
+    /// tokenizer.encode(("Sequence A", "Sequence B"), false);
+    ///
+    /// // Pre-tokenized sequences:
+    /// tokenizer.encode(&["Single", "sequence"][..], false);
+    /// tokenizer.encode((
+    ///     &["Sequence", "A"][..],
+    ///     &["Sequence", "B"][..]
+    /// ), false);
+    ///
+    /// // or even both types together:
+    /// tokenizer.encode(("A complete sequence", &["And", "a", "tokenized"][..]), false);
+    /// ```
+    pub fn encode<E: Into<EncodeInput>>(
+        &self,
+        input: E,
+        add_special_tokens: bool,
+    ) -> Result<Encoding> {
+        // Extract sequences from the EncodeInput
+        let (sequence, pair) = match input.into() {
             EncodeInput::Single(s1) => (s1, None),
             EncodeInput::Dual(s1, s2) => (s1, Some(s2)),
         };
 
-        let encoding = generate_output(sentence, 0)?;
+        // Encode each sequence
+        let encoding = self.encode_single_sequence(sequence, 0)?;
         let pair_encoding = match pair {
-            Some(pair) => Some(generate_output(pair, 1)?),
+            Some(sequence) => Some(self.encode_single_sequence(sequence, 1)?),
             None => None,
         };
 
-        // 4. Post processing
+        // And finally post process
         self.post_process(encoding, pair_encoding, add_special_tokens)
     }
 
     /// Encode all the sentences in parallel, using multiple threads
-    pub fn encode_batch(
+    pub fn encode_batch<E: Into<EncodeInput> + Send>(
         &self,
-        inputs: Vec<EncodeInput>,
+        inputs: Vec<E>,
         add_special_tokens: bool,
     ) -> Result<Vec<Encoding>> {
         let encodings = inputs
@@ -558,64 +681,88 @@ impl Tokenizer {
 
     /// Train a model and replace our current Model, using the given Trainer
     #[allow(clippy::borrowed_box)]
-    pub fn train(&mut self, trainer: &Box<dyn Trainer>, files: Vec<String>) -> Result<()> {
-        let progress = ProgressBar::new(100 * files.len() as u64);
-        progress.set_style(
-            ProgressStyle::default_bar()
-                .template("[{elapsed_precise}] {msg:<40!} {wide_bar} {percent:>19!}"),
-        );
-        progress.set_message("Reading files");
+    fn word_count(
+        &mut self,
+        trainer: &Box<dyn Trainer>,
+        files: Vec<String>,
+    ) -> Result<HashMap<String, u32>> {
+        let max_read = 1_000_000;
+        let len: u64 = files
+            .iter()
+            .map(|filename| File::open(filename).unwrap().metadata().unwrap().len() as u64)
+            .sum();
 
-        let results = files
-            .into_par_iter()
+        let progress = if trainer.should_show_progress() {
+            let progress = ProgressBar::new(len);
+            progress.set_style(
+                ProgressStyle::default_bar()
+                    .template("[{elapsed_precise}] {msg:<40!} {wide_bar} {percent:>19!}"),
+            );
+            progress.set_message(&format!("Reading files ({:.2} Mo)", len / 1_000_000));
+            progress.set_draw_delta(len / 100); // Redraw only every 2%
+            Some(progress)
+        } else {
+            None
+        };
+        let words = files
+            .into_iter()
             .map(|filename| -> Result<HashMap<String, u32>> {
-                let mut words = HashMap::new();
                 let file = File::open(filename)?;
-                let len = file.metadata().map_or(0, |c| c.len());
-                let mut file = BufReader::new(file);
-                let mut prev_prog = 0;
-                let mut read = 0;
-                let mut curr_prog;
-
-                let mut buf = String::new();
-                loop {
-                    buf.clear();
-                    // We read new lines using this API instead of the Lines Iterator
-                    // on purpose. We want to keep the `\n` and potential `\r` between each lines
-                    match file.read_line(&mut buf)? {
-                        0 => break,
-                        b => {
-                            let mut normalized = self.do_normalize(NormalizedString::from(&buf))?;
+                let file = BufReader::with_capacity(max_read, file);
+                // We read new lines using this API instead of the Lines Iterator
+                // on purpose. We want to keep the `\n` and potential `\r` between each lines
+                // We use an iterator to be able to chain with par_bridge.
+                let words = file
+                    .lines_with_ending()
+                    .par_bridge()
+                    .map_with(
+                        &progress,
+                        |progress, line| -> Result<HashMap<String, u32>> {
+                            let newline = line?;
+                            let mut words = HashMap::new();
+                            let mut normalized =
+                                self.do_normalize(NormalizedString::from(&newline))?;
                             let pre_tokenized = self.pre_tokenize(&mut normalized)?;
                             trainer.process_tokens(
                                 &mut words,
                                 pre_tokenized.into_iter().map(|(t, _)| t).collect(),
                             );
 
-                            read += b as u64;
-                            curr_prog = ((read as f64 / len as f64) * 100.0) as u64;
-                            if curr_prog > prev_prog {
-                                progress.inc(curr_prog - prev_prog);
-                                prev_prog = curr_prog;
+                            let b = newline.len();
+                            if let Some(pbar) = progress {
+                                pbar.inc(b as u64);
                             }
+                            Ok(words)
+                        },
+                    )
+                    .try_reduce(HashMap::new, |mut acc, ws| {
+                        for (k, v) in ws {
+                            acc.entry(k).and_modify(|c| *c += v).or_insert(v);
                         }
-                    }
-                }
+                        Ok(acc)
+                    })?;
 
                 Ok(words)
             })
-            .collect::<Vec<_>>();
-        progress.finish();
-
-        let mut words = HashMap::new();
-        for result in results {
-            for (word, count) in result? {
-                words
-                    .entry(word)
-                    .and_modify(|c| *c += count)
-                    .or_insert(count);
-            }
+            .try_fold(
+                HashMap::new(),
+                |mut acc, ws| -> Result<HashMap<String, u32>> {
+                    for (k, v) in ws? {
+                        acc.entry(k).and_modify(|c| *c += v).or_insert(v);
+                    }
+                    Ok(acc)
+                },
+            )?;
+        if let Some(pbar) = progress {
+            pbar.finish();
         }
+        Ok(words)
+    }
+
+    /// Train a model and replace our current Model, using the given Trainer
+    #[allow(clippy::borrowed_box)]
+    pub fn train(&mut self, trainer: &Box<dyn Trainer>, files: Vec<String>) -> Result<()> {
+        let words = self.word_count(trainer, files)?;
 
         let (model, special_tokens) = trainer.train(words)?;
         self.model = model;
@@ -653,7 +800,7 @@ impl Tokenizer {
     ) -> Result<Encoding> {
         // 1. First we truncate if needed
         let (encoding, pair_encoding) = {
-            if let Some(trunc) = &self.trunc {
+            if let Some(trunc) = &self.truncation {
                 let n_added_tokens = if let Some(processor) = &self.post_processor {
                     processor.added_tokens(pair_encoding.is_some())
                 } else {
