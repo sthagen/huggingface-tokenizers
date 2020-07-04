@@ -1,6 +1,6 @@
 import pickle
 import pytest
-from ..utils import data_dir, roberta_files, bert_files
+from ..utils import data_dir, roberta_files, bert_files, multiprocessing_with_parallelism
 
 from tokenizers import AddedToken, Tokenizer, Encoding
 from tokenizers.models import Model, BPE, WordPiece
@@ -17,29 +17,41 @@ class TestAddedToken:
         assert str(added_token) == "<mask>"
         assert (
             repr(added_token)
-            == 'AddedToken("<mask>", rstrip=False, lstrip=False, single_word=False)'
+            == 'AddedToken("<mask>", rstrip=False, lstrip=False, single_word=False, normalized=True)'
         )
         assert added_token.rstrip == False
         assert added_token.lstrip == False
         assert added_token.single_word == False
+        assert added_token.normalized == True
+        assert isinstance(pickle.loads(pickle.dumps(added_token)), AddedToken)
 
     def test_can_set_rstrip(self):
         added_token = AddedToken("<mask>", rstrip=True)
         assert added_token.rstrip == True
         assert added_token.lstrip == False
         assert added_token.single_word == False
+        assert added_token.normalized == True
 
     def test_can_set_lstrip(self):
         added_token = AddedToken("<mask>", lstrip=True)
         assert added_token.rstrip == False
         assert added_token.lstrip == True
         assert added_token.single_word == False
+        assert added_token.normalized == True
 
     def test_can_set_single_world(self):
         added_token = AddedToken("<mask>", single_word=True)
         assert added_token.rstrip == False
         assert added_token.lstrip == False
         assert added_token.single_word == True
+        assert added_token.normalized == True
+
+    def test_can_set_normalized(self):
+        added_token = AddedToken("<mask>", normalized=False)
+        assert added_token.rstrip == False
+        assert added_token.lstrip == False
+        assert added_token.single_word == False
+        assert added_token.normalized == False
 
 
 class TestTokenizer:
@@ -76,8 +88,12 @@ class TestTokenizer:
         added = tokenizer.add_tokens(["my", "name", "is", "john"])
         assert added == 4
 
-        added = tokenizer.add_tokens([AddedToken("the"), AddedToken("quick", rstrip=True)])
+        tokens = [AddedToken("the"), AddedToken("quick", normalized=False), AddedToken()]
+        assert tokens[0].normalized == True
+        added = tokenizer.add_tokens(tokens)
         assert added == 2
+        assert tokens[0].normalized == True
+        assert tokens[1].normalized == False
 
     def test_add_special_tokens(self):
         tokenizer = Tokenizer(BPE())
@@ -87,8 +103,12 @@ class TestTokenizer:
         assert added == 4
 
         # Can add special tokens as `AddedToken`
-        added = tokenizer.add_special_tokens([AddedToken("the"), AddedToken("quick", rstrip=True)])
+        tokens = [AddedToken("the"), AddedToken("quick", normalized=True), AddedToken()]
+        assert tokens[0].normalized == True
+        added = tokenizer.add_special_tokens(tokens)
         assert added == 2
+        assert tokens[0].normalized == False
+        assert tokens[1].normalized == True
 
     def test_encode(self):
         tokenizer = Tokenizer(BPE())
@@ -181,6 +201,10 @@ class TestTokenizer:
         output = tokenizer.encode("my name is john", "pair")
         assert output.tokens == ["my", "pair"]
 
+        # Can get the params and give them to enable_truncation
+        trunc = tokenizer.truncation
+        tokenizer.enable_truncation(**trunc)
+
     def test_padding(self):
         tokenizer = Tokenizer(BPE())
         tokenizer.add_tokens(["my", "name", "is", "john", "pair"])
@@ -194,12 +218,16 @@ class TestTokenizer:
         output = tokenizer.encode_batch(["my name", "my name is john"])
         assert all([len(encoding) == 4 for encoding in output])
 
-        # Can pad to the specified max length otherwise
-        tokenizer.enable_padding(max_length=4)
+        # Can pad to the specified length otherwise
+        tokenizer.enable_padding(length=4)
         output = tokenizer.encode("my name")
         assert output.tokens == ["my", "name", "[PAD]", "[PAD]"]
         output = tokenizer.encode("my name", "pair")
         assert output.tokens == ["my", "name", "pair", "[PAD]"]
+
+        # Can get the params and give them to enable_padding
+        padding = tokenizer.padding
+        tokenizer.enable_padding(**padding)
 
     def test_decode(self):
         tokenizer = Tokenizer(BPE())
@@ -249,7 +277,7 @@ class TestTokenizer:
         tokenizer = Tokenizer(BPE())
         tokenizer.add_tokens(["my", "name", "is", "john", "pair"])
         tokenizer.enable_truncation(2)
-        tokenizer.enable_padding(max_length=4)
+        tokenizer.enable_padding(length=4)
 
         encoding = tokenizer.encode("my name is john")
         pair_encoding = tokenizer.encode("pair")
@@ -261,3 +289,8 @@ class TestTokenizer:
         # Can post process a pair of encodings
         output = tokenizer.post_process(encoding, pair_encoding)
         assert output.tokens == ["my", "pair", "[PAD]", "[PAD]"]
+
+    def test_multiprocessing_with_parallelism(self):
+        tokenizer = Tokenizer(BPE())
+        multiprocessing_with_parallelism(tokenizer, False)
+        multiprocessing_with_parallelism(tokenizer, True)

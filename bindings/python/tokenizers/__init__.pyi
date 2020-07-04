@@ -200,7 +200,12 @@ class AddedToken:
     """
 
     def __new__(
-        cls, content: str, single_word: bool = False, lstrip: bool = False, rstrip: bool = False,
+        cls,
+        content: str = "",
+        single_word: bool = False,
+        lstrip: bool = False,
+        rstrip: bool = False,
+        normalized: bool = True,
     ) -> AddedToken:
         """ Instantiate a new AddedToken
 
@@ -209,18 +214,25 @@ class AddedToken:
                 The content of the token
 
             single_word: bool
-                Whether this token should only match against single word. If True,
-                this token will never match inside of a word.
+                Whether this token should only match against single words. If True,
+                this token will never match inside of a word. For example the token `ing` would
+                match on `tokenizing` if this option if False, but not if this option is True.
 
             lstrip: bool
                 Whether this token should strip all potential whitespaces on the left side.
-                If True, this token will greedily match any whitespace on the left and then strip
-                them out.
+                If True, this token will greedily match any whitespace on the left. For example,
+                if we try to match the token `[MASK]` with lstrip=True, in the text `I saw a [MASK]`
+                we will match on ` [MASK]`.
 
             rstrip: bool
                 Whether this token should strip all potential whitespaces on the right side.
-                If True, this token will greedily match any whitespace on the right and then strip
-                them out.
+                If True, this token will greedily match any whitespace on the right. It works just
+                like lstrip, but on the right.
+
+            normalized: bool:
+                Whether this token should be match the normalized version of the input text. For
+                example, with the added token `yesterday` and a normalizer in charge of lowercasing
+                the text, the token could be extract from the input `I saw a lion Yesterday`.
         """
         pass
 
@@ -392,19 +404,34 @@ class Tokenizer:
     def no_truncation(self):
         """ Disable truncation """
         pass
+    @property
+    def truncation(self) -> Optional[dict]:
+        """ Get the current truncation parameters
+
+        Returns:
+            None if truncation is disabled, a dict with the current truncation parameters if
+            truncation is enabled
+        """
+        pass
     def enable_padding(
         self,
         direction: Optional[str] = "right",
+        pad_to_multiple_of: Optional[int] = None,
         pad_id: Optional[int] = 0,
         pad_type_id: Optional[int] = 0,
         pad_token: Optional[str] = "[PAD]",
-        max_length: Optional[int] = None,
+        length: Optional[int] = None,
     ):
         """ Enable the padding
 
         Args:
             direction: (`optional`) str:
                 Can be one of: `right` or `left`
+
+            pad_to_multiple_of: (`optional`) unsigned int:
+                If specified, the padding length should always snap to the next multiple of
+                the given value. For example if we were going to pad with a length of 250 but
+                `pad_to_multiple_of=8` then we will pad to 256.
 
             pad_id: (`optional`) unsigned int:
                 The indice to be used when padding
@@ -415,13 +442,22 @@ class Tokenizer:
             pad_token: (`optional`) str:
                 The pad token to be used when padding
 
-            max_length: (`optional`) unsigned int:
+            length: (`optional`) unsigned int:
                 If specified, the length at which to pad. If not specified
                 we pad using the size of the longest sequence in a batch
         """
         pass
     def no_padding(self):
         """ Disable padding """
+        pass
+    @property
+    def padding(self) -> Optional[dict]:
+        """ Get the current padding parameters
+
+        Returns:
+            None if padding is disabled, a dict with the currently set parameters
+            if the padding is enabled.
+        """
         pass
     def normalize(self, sequence: str) -> str:
         """ Normalize the given sequence

@@ -20,56 +20,135 @@ use tk::tokenizer::{
     PaddingDirection, PaddingParams, PaddingStrategy, TruncationParams, TruncationStrategy,
 };
 
-#[pyclass(dict)]
+#[pyclass(dict, module = "tokenizers")]
 pub struct AddedToken {
-    pub token: tk::tokenizer::AddedToken,
+    pub content: String,
+    pub is_special_token: bool,
+    pub single_word: Option<bool>,
+    pub lstrip: Option<bool>,
+    pub rstrip: Option<bool>,
+    pub normalized: Option<bool>,
 }
+impl AddedToken {
+    pub fn from<S: Into<String>>(content: S, is_special_token: Option<bool>) -> Self {
+        Self {
+            content: content.into(),
+            is_special_token: is_special_token.unwrap_or(false),
+            single_word: None,
+            lstrip: None,
+            rstrip: None,
+            normalized: None,
+        }
+    }
+
+    pub fn get_token(&self) -> tk::tokenizer::AddedToken {
+        let mut token = tk::AddedToken::from(&self.content, self.is_special_token);
+
+        if let Some(sw) = self.single_word {
+            token = token.single_word(sw);
+        }
+        if let Some(ls) = self.lstrip {
+            token = token.lstrip(ls);
+        }
+        if let Some(rs) = self.rstrip {
+            token = token.rstrip(rs);
+        }
+        if let Some(n) = self.normalized {
+            token = token.normalized(n);
+        }
+
+        token
+    }
+
+    pub fn as_pydict<'py>(&self, py: Python<'py>) -> PyResult<&'py PyDict> {
+        let dict = PyDict::new(py);
+        let token = self.get_token();
+
+        dict.set_item("content", token.content)?;
+        dict.set_item("single_word", token.single_word)?;
+        dict.set_item("lstrip", token.lstrip)?;
+        dict.set_item("rstrip", token.rstrip)?;
+        dict.set_item("normalized", token.normalized)?;
+
+        Ok(dict)
+    }
+}
+
 #[pymethods]
 impl AddedToken {
     #[new]
     #[args(kwargs = "**")]
-    fn new(content: &str, kwargs: Option<&PyDict>) -> PyResult<Self> {
-        let mut token = tk::tokenizer::AddedToken::from(content.to_owned());
+    fn new(content: Option<&str>, kwargs: Option<&PyDict>) -> PyResult<Self> {
+        let mut token = AddedToken::from(content.unwrap_or(""), None);
 
         if let Some(kwargs) = kwargs {
             for (key, value) in kwargs {
                 let key: &str = key.extract()?;
                 match key {
-                    "single_word" => token = token.single_word(value.extract()?),
-                    "lstrip" => token = token.lstrip(value.extract()?),
-                    "rstrip" => token = token.rstrip(value.extract()?),
+                    "single_word" => token.single_word = Some(value.extract()?),
+                    "lstrip" => token.lstrip = Some(value.extract()?),
+                    "rstrip" => token.rstrip = Some(value.extract()?),
+                    "normalized" => token.normalized = Some(value.extract()?),
                     _ => println!("Ignored unknown kwarg option {}", key),
                 }
             }
         }
 
-        Ok(AddedToken { token })
+        Ok(token)
+    }
+
+    fn __getstate__<'py>(&self, py: Python<'py>) -> PyResult<&'py PyDict> {
+        self.as_pydict(py)
+    }
+
+    fn __setstate__(&mut self, py: Python, state: PyObject) -> PyResult<()> {
+        match state.extract::<&PyDict>(py) {
+            Ok(state) => {
+                for (key, value) in state {
+                    let key: &str = key.extract()?;
+                    match key {
+                        "single_word" => self.single_word = Some(value.extract()?),
+                        "lstrip" => self.lstrip = Some(value.extract()?),
+                        "rstrip" => self.rstrip = Some(value.extract()?),
+                        "normalized" => self.normalized = Some(value.extract()?),
+                        _ => {}
+                    }
+                }
+                Ok(())
+            }
+            Err(e) => Err(e),
+        }
     }
 
     #[getter]
     fn get_content(&self) -> &str {
-        &self.token.content
+        &self.content
     }
 
     #[getter]
     fn get_rstrip(&self) -> bool {
-        self.token.rstrip
+        self.get_token().rstrip
     }
 
     #[getter]
     fn get_lstrip(&self) -> bool {
-        self.token.lstrip
+        self.get_token().lstrip
     }
 
     #[getter]
     fn get_single_word(&self) -> bool {
-        self.token.single_word
+        self.get_token().single_word
+    }
+
+    #[getter]
+    fn get_normalized(&self) -> bool {
+        self.get_token().normalized
     }
 }
 #[pyproto]
 impl PyObjectProtocol for AddedToken {
     fn __str__(&'p self) -> PyResult<&'p str> {
-        Ok(&self.token.content)
+        Ok(&self.content)
     }
 
     fn __repr__(&self) -> PyResult<String> {
@@ -78,12 +157,14 @@ impl PyObjectProtocol for AddedToken {
             false => "False",
         };
 
+        let token = self.get_token();
         Ok(format!(
-            "AddedToken(\"{}\", rstrip={}, lstrip={}, single_word={})",
-            self.token.content,
-            bool_to_python(self.token.rstrip),
-            bool_to_python(self.token.lstrip),
-            bool_to_python(self.token.single_word)
+            "AddedToken(\"{}\", rstrip={}, lstrip={}, single_word={}, normalized={})",
+            self.content,
+            bool_to_python(token.rstrip),
+            bool_to_python(token.lstrip),
+            bool_to_python(token.single_word),
+            bool_to_python(token.normalized)
         ))
     }
 }
@@ -294,17 +375,17 @@ impl Tokenizer {
 
     #[args(kwargs = "**")]
     fn enable_truncation(&mut self, max_length: usize, kwargs: Option<&PyDict>) -> PyResult<()> {
-        let mut stride = 0;
-        let mut strategy = TruncationStrategy::LongestFirst;
+        let mut params = TruncationParams::default();
+        params.max_length = max_length;
 
         if let Some(kwargs) = kwargs {
             for (key, value) in kwargs {
                 let key: &str = key.extract()?;
                 match key {
-                    "stride" => stride = value.extract()?,
+                    "stride" => params.stride = value.extract()?,
                     "strategy" => {
                         let value: &str = value.extract()?;
-                        strategy = match value {
+                        params.strategy = match value {
                             "longest_first" => Ok(TruncationStrategy::LongestFirst),
                             "only_first" => Ok(TruncationStrategy::OnlyFirst),
                             "only_second" => Ok(TruncationStrategy::OnlySecond),
@@ -321,11 +402,7 @@ impl Tokenizer {
             }
         }
 
-        self.tokenizer.with_truncation(Some(TruncationParams {
-            max_length,
-            stride,
-            strategy,
-        }));
+        self.tokenizer.with_truncation(Some(params));
 
         Ok(())
     }
@@ -334,13 +411,22 @@ impl Tokenizer {
         self.tokenizer.with_truncation(None);
     }
 
+    #[getter]
+    fn get_truncation<'py>(&self, py: Python<'py>) -> PyResult<Option<&'py PyDict>> {
+        self.tokenizer.get_truncation().map_or(Ok(None), |params| {
+            let dict = PyDict::new(py);
+
+            dict.set_item("max_length", params.max_length)?;
+            dict.set_item("stride", params.stride)?;
+            dict.set_item("strategy", params.strategy.as_ref())?;
+
+            Ok(Some(dict))
+        })
+    }
+
     #[args(kwargs = "**")]
     fn enable_padding(&mut self, kwargs: Option<&PyDict>) -> PyResult<()> {
-        let mut direction = PaddingDirection::Right;
-        let mut pad_id: u32 = 0;
-        let mut pad_type_id: u32 = 0;
-        let mut pad_token = String::from("[PAD]");
-        let mut max_length: Option<usize> = None;
+        let mut params = PaddingParams::default();
 
         if let Some(kwargs) = kwargs {
             for (key, value) in kwargs {
@@ -348,7 +434,7 @@ impl Tokenizer {
                 match key {
                     "direction" => {
                         let value: &str = value.extract()?;
-                        direction = match value {
+                        params.direction = match value {
                             "left" => Ok(PaddingDirection::Left),
                             "right" => Ok(PaddingDirection::Right),
                             other => Err(PyError(format!(
@@ -359,34 +445,66 @@ impl Tokenizer {
                             .into_pyerr()),
                         }?;
                     }
-                    "pad_id" => pad_id = value.extract()?,
-                    "pad_type_id" => pad_type_id = value.extract()?,
-                    "pad_token" => pad_token = value.extract()?,
-                    "max_length" => max_length = value.extract()?,
+                    "pad_to_multiple_of" => {
+                        if let Some(multiple) = value.extract()? {
+                            params.pad_to_multiple_of = multiple;
+                        }
+                    }
+                    "pad_id" => params.pad_id = value.extract()?,
+                    "pad_type_id" => params.pad_type_id = value.extract()?,
+                    "pad_token" => params.pad_token = value.extract()?,
+                    "max_length" => {
+                        println!(
+                            "enable_padding(max_length=X) is deprecated, \
+                                 use enable_padding(length=X) instead"
+                        );
+                        if let Some(l) = value.extract()? {
+                            params.strategy = PaddingStrategy::Fixed(l);
+                        } else {
+                            params.strategy = PaddingStrategy::BatchLongest;
+                        }
+                    }
+                    "length" => {
+                        if let Some(l) = value.extract()? {
+                            params.strategy = PaddingStrategy::Fixed(l);
+                        } else {
+                            params.strategy = PaddingStrategy::BatchLongest;
+                        }
+                    }
                     _ => println!("Ignored unknown kwarg option {}", key),
                 }
             }
         }
 
-        let strategy = if let Some(max_length) = max_length {
-            PaddingStrategy::Fixed(max_length)
-        } else {
-            PaddingStrategy::BatchLongest
-        };
-
-        self.tokenizer.with_padding(Some(PaddingParams {
-            strategy,
-            direction,
-            pad_id,
-            pad_type_id,
-            pad_token: pad_token.to_owned(),
-        }));
+        self.tokenizer.with_padding(Some(params));
 
         Ok(())
     }
 
     fn no_padding(&mut self) {
         self.tokenizer.with_padding(None);
+    }
+
+    #[getter]
+    fn get_padding<'py>(&self, py: Python<'py>) -> PyResult<Option<&'py PyDict>> {
+        self.tokenizer.get_padding().map_or(Ok(None), |params| {
+            let dict = PyDict::new(py);
+
+            dict.set_item(
+                "length",
+                match params.strategy {
+                    tk::PaddingStrategy::BatchLongest => None,
+                    tk::PaddingStrategy::Fixed(size) => Some(size),
+                },
+            )?;
+            dict.set_item("pad_to_multiple_of", params.pad_to_multiple_of)?;
+            dict.set_item("pad_id", params.pad_id)?;
+            dict.set_item("pad_token", &params.pad_token)?;
+            dict.set_item("pad_type_id", params.pad_type_id)?;
+            dict.set_item("direction", params.direction.as_ref())?;
+
+            Ok(Some(dict))
+        })
     }
 
     fn normalize(&self, sentence: &str) -> PyResult<String> {
@@ -496,7 +614,7 @@ impl Tokenizer {
         self.tokenizer.token_to_id(token)
     }
 
-    fn id_to_token(&self, id: u32) -> Option<String> {
+    fn id_to_token(&self, id: u32) -> Option<&str> {
         self.tokenizer.id_to_token(id)
     }
 
@@ -505,12 +623,10 @@ impl Tokenizer {
             .into_iter()
             .map(|token| {
                 if let Ok(content) = token.extract::<String>() {
-                    Ok(tk::tokenizer::AddedToken {
-                        content,
-                        ..Default::default()
-                    })
-                } else if let Ok(token) = token.extract::<PyRef<AddedToken>>() {
-                    Ok(token.token.clone())
+                    Ok(AddedToken::from(content, Some(false)).get_token())
+                } else if let Ok(mut token) = token.extract::<PyRefMut<AddedToken>>() {
+                    token.is_special_token = false;
+                    Ok(token.get_token())
                 } else {
                     Err(exceptions::Exception::py_err(
                         "Input must be a List[Union[str, AddedToken]]",
@@ -527,12 +643,10 @@ impl Tokenizer {
             .into_iter()
             .map(|token| {
                 if let Ok(content) = token.extract::<String>() {
-                    Ok(tk::tokenizer::AddedToken {
-                        content,
-                        ..Default::default()
-                    })
-                } else if let Ok(token) = token.extract::<PyRef<AddedToken>>() {
-                    Ok(token.token.clone())
+                    Ok(tk::tokenizer::AddedToken::from(content, true))
+                } else if let Ok(mut token) = token.extract::<PyRefMut<AddedToken>>() {
+                    token.is_special_token = true;
+                    Ok(token.get_token())
                 } else {
                     Err(exceptions::Exception::py_err(
                         "Input must be a List[Union[str, AddedToken]]",

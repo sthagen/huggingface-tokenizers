@@ -52,16 +52,22 @@ class BaseTokenizer:
     def enable_padding(
         self,
         direction: Optional[str] = "right",
+        pad_to_multiple_of: Optional[int] = None,
         pad_id: Optional[int] = 0,
         pad_type_id: Optional[int] = 0,
         pad_token: Optional[str] = "[PAD]",
-        max_length: Optional[int] = None,
+        length: Optional[int] = None,
     ):
         """ Change the padding strategy
 
         Args:
             direction: (`optional`) str:
                 Can be one of: `right` or `left`
+
+            pad_to_multiple_of: (`optional`) unsigned int:
+                If specified, the padding length should always snap to the next multiple of
+                the given value. For example if we were going to pad with a length of 250 but
+                `pad_to_multiple_of=8` then we will pad to 256.
 
             pad_id: (`optional`) unsigned int:
                 The indice to be used when padding
@@ -72,21 +78,32 @@ class BaseTokenizer:
             pad_token: (`optional`) str:
                 The pad token to be used when padding
 
-            max_length: (`optional`) unsigned int:
+            length: (`optional`) unsigned int:
                 If specified, the length at which to pad. If not specified
                 we pad using the size of the longest sequence in a batch
         """
         return self._tokenizer.enable_padding(
             direction=direction,
+            pad_to_multiple_of=pad_to_multiple_of,
             pad_id=pad_id,
             pad_type_id=pad_type_id,
             pad_token=pad_token,
-            max_length=max_length,
+            length=length,
         )
 
     def no_padding(self):
         """ Disable padding """
         return self._tokenizer.no_padding()
+
+    @property
+    def padding(self) -> Optional[dict]:
+        """ Get the current padding parameters
+
+        Returns:
+            None if padding is disabled, a dict with the currently set parameters
+            if the padding is enabled.
+        """
+        return self._tokenizer.padding
 
     def enable_truncation(
         self, max_length: int, stride: Optional[int] = 0, strategy: Optional[str] = "longest_first"
@@ -109,6 +126,16 @@ class BaseTokenizer:
     def no_truncation(self):
         """ Disable truncation """
         return self._tokenizer.no_truncation()
+
+    @property
+    def truncation(self) -> Optional[dict]:
+        """ Get the current truncation parameters
+
+        Returns:
+            None if truncation is disabled, a dict with the current truncation parameters if
+            truncation is enabled
+        """
+        return self._tokenizer.truncation
 
     def add_tokens(self, tokens: List[Union[str, AddedToken]]) -> int:
         """ Add the given tokens to the vocabulary

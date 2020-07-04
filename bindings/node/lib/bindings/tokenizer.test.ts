@@ -32,17 +32,17 @@ import {
 
 describe("AddedToken", () => {
   it("instantiates with only content", () => {
-    const addToken = new AddedToken("test");
+    const addToken = new AddedToken("test", false);
     expect(addToken.constructor.name).toEqual("AddedToken");
   });
 
   it("instantiates with empty options", () => {
-    const addToken = new AddedToken("test", {});
+    const addToken = new AddedToken("test", false, {});
     expect(addToken.constructor.name).toEqual("AddedToken");
   });
 
   it("instantiates with options", () => {
-    const addToken = new AddedToken("test", {
+    const addToken = new AddedToken("test", false, {
       leftStrip: true,
       rightStrip: true,
       singleWord: true
@@ -52,7 +52,7 @@ describe("AddedToken", () => {
 
   describe("getContent", () => {
     it("returns the string content of AddedToken", () => {
-      const addedToken = new AddedToken("test");
+      const addedToken = new AddedToken("test", false);
       expect(addedToken.getContent()).toEqual("test");
     });
   });
@@ -107,7 +107,7 @@ describe("Tokenizer", () => {
     it("accepts a list of AddedToken as new tokens when initial model is empty", () => {
       const model = BPE.empty();
       const tokenizer = new Tokenizer(model);
-      const addedToken = new AddedToken("test");
+      const addedToken = new AddedToken("test", false);
 
       const nbAdd = tokenizer.addTokens([addedToken]);
       expect(nbAdd).toBe(1);
@@ -132,7 +132,7 @@ describe("Tokenizer", () => {
 
       const model = BPE.empty();
       tokenizer = new Tokenizer(model);
-      tokenizer.addTokens(["my", "name", "is", "john", new AddedToken("pair")]);
+      tokenizer.addTokens(["my", "name", "is", "john", new AddedToken("pair", false)]);
 
       encode = promisify(tokenizer.encode.bind(tokenizer));
       encodeBatch = promisify(tokenizer.encodeBatch.bind(tokenizer));
@@ -254,6 +254,16 @@ describe("Tokenizer", () => {
           "[PAD]",
           "[PAD]"
         ]);
+      });
+
+      it("pads to multiple of the given value", async () => {
+        tokenizer.setPadding({ padToMultipleOf: 8 });
+
+        const singleEncoding = await encode("my name", null);
+        expect(singleEncoding.getTokens()).toHaveLength(8);
+
+        const pairEncoding = await encode("my name", "pair");
+        expect(pairEncoding.getTokens()).toHaveLength(8);
       });
     });
   });
