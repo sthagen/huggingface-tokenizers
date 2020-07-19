@@ -21,7 +21,7 @@ class BertWordPieceTokenizer(BaseTokenizer):
         mask_token: Union[str, AddedToken] = "[MASK]",
         clean_text: bool = True,
         handle_chinese_chars: bool = True,
-        strip_accents: bool = True,
+        strip_accents: Optional[bool] = None,
         lowercase: bool = True,
         wordpieces_prefix: str = "##",
     ):
@@ -29,7 +29,7 @@ class BertWordPieceTokenizer(BaseTokenizer):
         if vocab_file is not None:
             tokenizer = Tokenizer(WordPiece(vocab_file, unk_token=str(unk_token)))
         else:
-            tokenizer = Tokenizer(WordPiece())
+            tokenizer = Tokenizer(WordPiece(unk_token=str(unk_token)))
 
         # Let the tokenizer know about special tokens if they are part of the vocab
         if tokenizer.token_to_id(str(unk_token)) is not None:
