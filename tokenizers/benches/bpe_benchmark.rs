@@ -7,16 +7,18 @@ use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::time::{Duration, Instant};
 use tokenizers::models::bpe::{BpeTrainerBuilder, BPE};
+use tokenizers::models::{ModelWrapper, TrainerWrapper};
 use tokenizers::pre_tokenizers::byte_level::ByteLevel;
 use tokenizers::pre_tokenizers::whitespace::Whitespace;
-use tokenizers::tokenizer::{AddedToken, EncodeInput, Tokenizer, Trainer};
+use tokenizers::tokenizer::{AddedToken, EncodeInput, Trainer};
+use tokenizers::Tokenizer;
 
 static BATCH_SIZE: usize = 1_000;
 
 fn create_gpt2_tokenizer(bpe: BPE) -> Tokenizer {
-    let mut tokenizer = Tokenizer::new(Box::new(bpe));
-    tokenizer.with_pre_tokenizer(Box::new(ByteLevel::default()));
-    tokenizer.with_decoder(Box::new(ByteLevel::default()));
+    let mut tokenizer = Tokenizer::new(bpe);
+    tokenizer.with_pre_tokenizer(ByteLevel::default());
+    tokenizer.with_decoder(ByteLevel::default());
     tokenizer.add_tokens(&[AddedToken::from("ing", false).single_word(false)]);
     tokenizer.add_special_tokens(&[AddedToken::from("[ENT]", true).single_word(true)]);
     tokenizer
@@ -95,33 +97,37 @@ fn bench_gpt2(c: &mut Criterion) {
     });
 }
 
-#[allow(clippy::borrowed_box)]
-fn iter_bench_train(
+fn iter_bench_train<T>(
     iters: u64,
-    tokenizer: &mut Tokenizer,
-    trainer: &Box<dyn Trainer>,
+    tokenizer: Tokenizer,
+    trainer: &T,
     files: Vec<String>,
-) -> Duration {
+) -> Duration
+where
+    T: Trainer<Model = ModelWrapper> + Sync,
+{
+    let mut tokenizer = tokenizer.into_inner();
     let mut duration = Duration::new(0, 0);
     for _i in 0..iters {
         let start = Instant::now();
-        let _ = black_box(tokenizer.train(&trainer, files.clone()));
+        tokenizer = black_box(tokenizer.train(trainer, files.clone()).unwrap());
         duration = duration.checked_add(start.elapsed()).unwrap();
     }
     duration
 }
 
 fn bench_train(c: &mut Criterion) {
-    let mut tokenizer = Tokenizer::new(Box::new(BPE::default()));
-    tokenizer.with_pre_tokenizer(Box::new(Whitespace));
-
-    let trainer: Box<dyn Trainer> =
-        Box::new(BpeTrainerBuilder::default().show_progress(false).build());
+    let trainer: TrainerWrapper = BpeTrainerBuilder::default()
+        .show_progress(false)
+        .build()
+        .into();
     c.bench_function("BPE Train vocabulary (small)", |b| {
         b.iter_custom(|iters| {
+            let mut tokenizer = Tokenizer::new(BPE::default());
+            tokenizer.with_pre_tokenizer(Whitespace::default());
             iter_bench_train(
                 iters,
-                &mut tokenizer,
+                tokenizer,
                 &trainer,
                 vec!["data/small.txt".to_string()],
             )
@@ -130,12 +136,9 @@ fn bench_train(c: &mut Criterion) {
 
     c.bench_function("BPE Train vocabulary (big)", |b| {
         b.iter_custom(|iters| {
-            iter_bench_train(
-                iters,
-                &mut tokenizer,
-                &trainer,
-                vec!["data/big.txt".to_string()],
-            )
+            let mut tokenizer = Tokenizer::new(BPE::default());
+            tokenizer.with_pre_tokenizer(Whitespace::default());
+            iter_bench_train(iters, tokenizer, &trainer, vec!["data/big.txt".to_string()])
         })
     });
 }

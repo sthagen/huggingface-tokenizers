@@ -1,9 +1,11 @@
 use crate::tokenizer::{Decoder, Result};
+
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Deserialize, Clone, Debug, Serialize)]
 /// The WordPiece decoder takes care of decoding a list of wordpiece tokens
 /// back into a readable string.
+#[serde(tag = "type")]
 pub struct WordPiece {
     /// The prefix to be used for continuing subwords
     prefix: String,
@@ -26,7 +28,6 @@ impl Default for WordPiece {
     }
 }
 
-#[typetag::serde]
 impl Decoder for WordPiece {
     fn decode(&self, tokens: Vec<String>) -> Result<String> {
         let mut output = tokens.join(" ").replace(&format!(" {}", self.prefix), "");

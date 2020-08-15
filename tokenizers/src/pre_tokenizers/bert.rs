@@ -1,82 +1,63 @@
-use crate::tokenizer::{NormalizedString, Offsets, PreTokenizer, Result};
-use serde::{Deserialize, Serialize};
+use crate::tokenizer::{PreTokenizedString, PreTokenizer, Result, SplitDelimiterBehavior};
 use unicode_categories::UnicodeCategories;
 
 fn is_bert_punc(x: char) -> bool {
     char::is_ascii_punctuation(&x) || x.is_punctuation()
 }
 
-/// Split the given string as the `should_split` predicate dictates. Keep track of the offsets
-fn split_on<F: Fn(char) -> bool>(
-    s: &str,
-    should_split: F,
-    include_split_token: bool,
-) -> Vec<(String, Offsets)> {
-    let mut words: Vec<(String, Offsets)> = vec![];
-    let mut offset = 0;
-    let mut word = Vec::with_capacity(50);
-    s.chars().for_each(|c| {
-        if should_split(c) {
-            if !word.is_empty() {
-                let offsets = (offset - word.len(), offset);
-                words.push((word.drain(0..).collect::<String>(), offsets));
-            }
-            if include_split_token {
-                words.push((c.to_string(), (offset, offset + 1)));
-            }
-        } else if !should_split(c) {
-            word.push(c);
-        }
-        offset += 1;
-    });
-    // Don't forget the potential last word
-    if !word.is_empty() {
-        let offsets = (offset - word.len(), offset);
-        words.push((word.drain(0..).collect::<String>(), offsets));
-    }
-
-    words
-}
-
-#[derive(Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug)]
 pub struct BertPreTokenizer;
+impl_serde_unit_struct!(BertVisitor, BertPreTokenizer);
 
-#[typetag::serde]
 impl PreTokenizer for BertPreTokenizer {
-    fn pre_tokenize(&self, normalized: &mut NormalizedString) -> Result<Vec<(String, Offsets)>> {
-        let mut split_tokens = vec![];
-        for (token, offsets) in split_on(normalized.get(), char::is_whitespace, false) {
-            split_tokens.extend(
-                split_on(&token, is_bert_punc, true)
-                    .into_iter()
-                    .map(|(tok, off)| (tok, (off.0 + offsets.0, off.1 + offsets.0))),
-            );
-        }
-        Ok(split_tokens)
+    fn pre_tokenize(&self, pretokenized: &mut PreTokenizedString) -> Result<()> {
+        pretokenized.split(|_, sub| {
+            Ok(sub
+                .split(char::is_whitespace, SplitDelimiterBehavior::Removed)?
+                .into_iter()
+                .flat_map(|sub| {
+                    let result = sub.split(is_bert_punc, SplitDelimiterBehavior::Isolated);
+                    if let Err(e) = result {
+                        itertools::Either::Left(std::iter::once(Err(e)))
+                    } else {
+                        itertools::Either::Right(result.unwrap().into_iter().map(Ok))
+                    }
+                })
+                .collect::<Result<Vec<_>>>()?)
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::OffsetReferential;
 
     #[test]
     fn basic() {
         let pretok = BertPreTokenizer;
-        let mut input = NormalizedString::from("Hey friend!     How are you?!?");
-        let res = pretok.pre_tokenize(&mut input).unwrap();
+        let mut pretokenized: PreTokenizedString = "Hey friend!     How are you?!?".into();
+        pretok.pre_tokenize(&mut pretokenized).unwrap();
         assert_eq!(
-            &res,
-            &[
-                ("Hey".into(), (0, 3)),
-                ("friend".into(), (4, 10)),
-                ("!".into(), (10, 11)),
-                ("How".into(), (16, 19)),
-                ("are".into(), (20, 23)),
-                ("you".into(), (24, 27)),
-                ("?".into(), (27, 28)),
-                ("!".into(), (28, 29)),
-                ("?".into(), (29, 30)),
+            pretokenized.get_normalized(OffsetReferential::Original),
+            vec![
+                ("Hey", (0, 3)),
+                ("", (3, 4)),
+                ("friend", (4, 10)),
+                ("!", (10, 11)),
+                ("", (11, 12)),
+                ("", (12, 13)),
+                ("", (13, 14)),
+                ("", (14, 15)),
+                ("", (15, 16)),
+                ("How", (16, 19)),
+                ("", (19, 20)),
+                ("are", (20, 23)),
+                ("", (23, 24)),
+                ("you", (24, 27)),
+                ("?", (27, 28)),
+                ("!", (28, 29)),
+                ("?", (29, 30)),
             ]
         );
     }

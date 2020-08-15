@@ -1,66 +1,85 @@
-use crate::tokenizer::{NormalizedString, Offsets, PreTokenizer, Result};
-use regex::Regex;
-use serde::{Deserialize, Serialize};
+use std::fmt;
 
-#[derive(Serialize, Deserialize)]
-pub struct Whitespace;
-#[typetag::serde]
-impl PreTokenizer for Whitespace {
-    fn pre_tokenize(&self, normalized: &mut NormalizedString) -> Result<Vec<(String, Offsets)>> {
-        lazy_static! {
-            static ref RE: Regex = Regex::new(r"\w+|[^\w\s]+").unwrap();
+use regex::Regex;
+use serde::{Deserialize, Deserializer, Serialize};
+
+use crate::tokenizer::{
+    pattern::Invert, PreTokenizedString, PreTokenizer, Result, SplitDelimiterBehavior,
+};
+use serde::de::{Error, Visitor};
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(tag = "type")]
+pub struct Whitespace {
+    #[serde(default = "default_regex", skip)]
+    re: Regex,
+}
+
+fn default_regex() -> Regex {
+    Regex::new(r"\w+|[^\w\s]+").unwrap()
+}
+
+impl Default for Whitespace {
+    fn default() -> Self {
+        Self {
+            re: default_regex(),
         }
-        Ok(RE
-            .captures_iter(normalized.get())
-            .flat_map(|captures| {
-                captures
-                    .iter()
-                    .map(|m| {
-                        m.map(|capture| {
-                            let (start, end) = (capture.start(), capture.end());
-                            (normalized.get()[start..end].to_owned(), (start, end))
-                        })
-                        .unwrap_or_else(|| (String::from(""), (0, 0)))
-                    })
-                    .collect::<Vec<(String, Offsets)>>()
-            })
-            .collect())
     }
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct WhitespaceSplit;
-#[typetag::serde]
-impl PreTokenizer for WhitespaceSplit {
-    fn pre_tokenize(&self, normalized: &mut NormalizedString) -> Result<Vec<(String, Offsets)>> {
-        let mut words = vec![];
-        let mut word = Vec::with_capacity(1000);
-        let mut offset = 0;
+impl PreTokenizer for Whitespace {
+    fn pre_tokenize(&self, pretokenized: &mut PreTokenizedString) -> Result<()> {
+        pretokenized.split(|_, normalized| {
+            normalized.split(Invert(&self.re), SplitDelimiterBehavior::Removed)
+        })
+    }
+}
 
-        normalized.get().chars().for_each(|c| {
-            if c.is_whitespace() {
-                if !word.is_empty() {
-                    let offsets = (offset - word.len(), offset);
-                    words.push((word.drain(0..).collect::<String>(), offsets));
-                }
-            } else {
-                word.push(c);
-            }
-            offset += 1;
-        });
-        if !word.is_empty() {
-            let offsets = (offset - word.len(), offset);
-            words.push((word.drain(0..).collect::<String>(), offsets));
+// manually implement deserialize because Whitespace is not a unit-struct but is
+// serialized like one.
+impl<'de> Deserialize<'de> for Whitespace {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_map(WhitespaceVisitor)
+    }
+}
+struct WhitespaceVisitor;
+impl<'de> Visitor<'de> for WhitespaceVisitor {
+    type Value = Whitespace;
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        write!(formatter, "Whitespace")
+    }
+
+    fn visit_map<A>(self, mut map: A) -> std::result::Result<Self::Value, A::Error>
+    where
+        A: serde::de::MapAccess<'de>,
+    {
+        match map.next_entry::<&str, &str>()? {
+            Some(("type", "Whitespace")) => Ok(Whitespace::default()),
+            Some((_, ty)) => Err(Error::custom(&format!("Expected Whitespace, got {}", ty))),
+            None => Err(Error::custom("Expected type: Whitespace")),
         }
+    }
+}
 
-        Ok(words)
+#[derive(Copy, Clone, Debug)]
+pub struct WhitespaceSplit;
+impl_serde_unit_struct!(WhitespaceSplitVisitor, WhitespaceSplit);
+
+impl PreTokenizer for WhitespaceSplit {
+    fn pre_tokenize(&self, pretokenized: &mut PreTokenizedString) -> Result<()> {
+        pretokenized.split(|_, normalized| {
+            normalized.split(char::is_whitespace, SplitDelimiterBehavior::Removed)
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tokenizer::PreTokenizer;
+    use crate::{OffsetReferential, PreTokenizer};
 
     #[test]
     fn basic() {
@@ -68,26 +87,35 @@ mod tests {
             (
                 "Hey man!",
                 vec![
-                    ("Hey".into(), (0, 3)),
-                    ("man".into(), (4, 7)),
-                    ("!".into(), (7, 8)),
+                    ("Hey", (0, 3)),
+                    ("", (3, 4)),
+                    ("man", (4, 7)),
+                    ("!", (7, 8)),
                 ],
             ),
             (
                 "How are you doing?",
                 vec![
-                    ("How".into(), (0, 3)),
-                    ("are".into(), (4, 7)),
-                    ("you".into(), (8, 11)),
-                    ("doing".into(), (12, 17)),
-                    ("?".into(), (17, 18)),
+                    ("How", (0, 3)),
+                    ("", (3, 4)),
+                    ("are", (4, 7)),
+                    ("", (7, 8)),
+                    ("you", (8, 11)),
+                    ("", (11, 12)),
+                    ("doing", (12, 17)),
+                    ("?", (17, 18)),
                 ],
             ),
+            ("\n", vec![("", (0, 1))]),
         ];
-        let pretok = Whitespace;
+        let pretok = Whitespace::default();
         for (s, res) in tests {
-            let mut input = NormalizedString::from(s);
-            assert_eq!(pretok.pre_tokenize(&mut input).unwrap(), res);
+            let mut pretokenized = PreTokenizedString::from(s);
+            pretok.pre_tokenize(&mut pretokenized).unwrap();
+            assert_eq!(
+                pretokenized.get_normalized(OffsetReferential::Original),
+                res
+            );
         }
     }
 
@@ -96,21 +124,27 @@ mod tests {
         let tests = vec![
             (
                 "Hey man!",
-                vec![("Hey".into(), (0, 3)), ("man!".into(), (4, 8))],
+                vec![("Hey", (0, 3)), ("", (3, 4)), ("man!", (4, 8))],
             ),
             (
                 "Hey, man, Good?",
                 vec![
-                    ("Hey,".into(), (0, 4)),
-                    ("man,".into(), (5, 9)),
-                    ("Good?".into(), (10, 15)),
+                    ("Hey,", (0, 4)),
+                    ("", (4, 5)),
+                    ("man,", (5, 9)),
+                    ("", (9, 10)),
+                    ("Good?", (10, 15)),
                 ],
             ),
         ];
         let pretok = WhitespaceSplit;
         for (s, res) in tests {
-            let mut input = NormalizedString::from(s);
-            assert_eq!(pretok.pre_tokenize(&mut input).unwrap(), res);
+            let mut pretokenized = PreTokenizedString::from(s);
+            pretok.pre_tokenize(&mut pretokenized).unwrap();
+            assert_eq!(
+                pretokenized.get_normalized(OffsetReferential::Original),
+                res
+            );
         }
     }
 }

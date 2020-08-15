@@ -1,40 +1,81 @@
-extern crate tokenizers as tk;
+use std::sync::Arc;
 
-use super::utils::Container;
 use pyo3::exceptions;
 use pyo3::prelude::*;
 use pyo3::types::*;
 
-#[pyclass(dict, module = "tokenizers.normalizers")]
-pub struct Normalizer {
-    pub normalizer: Container<dyn tk::tokenizer::Normalizer>,
+use serde::ser::SerializeStruct;
+use serde::{Deserialize, Serialize, Serializer};
+use tk::normalizers::{BertNormalizer, Lowercase, NormalizerWrapper, Strip, NFC, NFD, NFKC, NFKD};
+use tk::{NormalizedString, Normalizer};
+use tokenizers as tk;
+
+#[pyclass(dict, module = "tokenizers.normalizers", name=Normalizer)]
+#[derive(Clone, Serialize, Deserialize)]
+pub struct PyNormalizer {
+    #[serde(flatten)]
+    pub(crate) normalizer: PyNormalizerWrapper,
+}
+
+impl PyNormalizer {
+    pub(crate) fn new(normalizer: PyNormalizerWrapper) -> Self {
+        PyNormalizer { normalizer }
+    }
+    pub(crate) fn get_as_subtype(&self) -> PyResult<PyObject> {
+        let base = self.clone();
+        let gil = Python::acquire_gil();
+        let py = gil.python();
+        match self.normalizer {
+            PyNormalizerWrapper::Sequence(_) => Py::new(py, (PySequence {}, base)).map(Into::into),
+            PyNormalizerWrapper::Wrapped(ref inner) => match inner.as_ref() {
+                NormalizerWrapper::Sequence(_) => {
+                    Py::new(py, (PySequence {}, base)).map(Into::into)
+                }
+                NormalizerWrapper::BertNormalizer(_) => {
+                    Py::new(py, (PyBertNormalizer {}, base)).map(Into::into)
+                }
+                NormalizerWrapper::StripNormalizer(_) => {
+                    Py::new(py, (PyBertNormalizer {}, base)).map(Into::into)
+                }
+                NormalizerWrapper::NFC(_) => Py::new(py, (PyNFC {}, base)).map(Into::into),
+                NormalizerWrapper::NFD(_) => Py::new(py, (PyNFD {}, base)).map(Into::into),
+                NormalizerWrapper::NFKC(_) => Py::new(py, (PyNFKC {}, base)).map(Into::into),
+                NormalizerWrapper::NFKD(_) => Py::new(py, (PyNFKD {}, base)).map(Into::into),
+                NormalizerWrapper::Lowercase(_) => {
+                    Py::new(py, (PyLowercase {}, base)).map(Into::into)
+                }
+            },
+        }
+    }
+}
+
+impl Normalizer for PyNormalizer {
+    fn normalize(&self, normalized: &mut NormalizedString) -> tk::Result<()> {
+        self.normalizer.normalize(normalized)
+    }
 }
 
 #[pymethods]
-impl Normalizer {
+impl PyNormalizer {
     fn __getstate__(&self, py: Python) -> PyResult<PyObject> {
-        let data = self
-            .normalizer
-            .execute(|normalizer| serde_json::to_string(&normalizer))
-            .map_err(|e| {
-                exceptions::Exception::py_err(format!(
-                    "Error while attempting to pickle Normalizer: {}",
-                    e.to_string()
-                ))
-            })?;
+        let data = serde_json::to_string(&self.normalizer).map_err(|e| {
+            exceptions::Exception::py_err(format!(
+                "Error while attempting to pickle Normalizer: {}",
+                e.to_string()
+            ))
+        })?;
         Ok(PyBytes::new(py, data.as_bytes()).to_object(py))
     }
 
     fn __setstate__(&mut self, py: Python, state: PyObject) -> PyResult<()> {
         match state.extract::<&PyBytes>(py) {
             Ok(s) => {
-                self.normalizer =
-                    Container::Owned(serde_json::from_slice(s.as_bytes()).map_err(|e| {
-                        exceptions::Exception::py_err(format!(
-                            "Error while attempting to unpickle Normalizer: {}",
-                            e.to_string()
-                        ))
-                    })?);
+                self.normalizer = serde_json::from_slice(s.as_bytes()).map_err(|e| {
+                    exceptions::Exception::py_err(format!(
+                        "Error while attempting to unpickle Normalizer: {}",
+                        e.to_string()
+                    ))
+                })?;
                 Ok(())
             }
             Err(e) => Err(e),
@@ -42,13 +83,13 @@ impl Normalizer {
     }
 }
 
-#[pyclass(extends=Normalizer, module = "tokenizers.normalizers")]
-pub struct BertNormalizer {}
+#[pyclass(extends=PyNormalizer, module = "tokenizers.normalizers", name=BertNormalizer)]
+pub struct PyBertNormalizer {}
 #[pymethods]
-impl BertNormalizer {
+impl PyBertNormalizer {
     #[new]
     #[args(kwargs = "**")]
-    fn new(kwargs: Option<&PyDict>) -> PyResult<(Self, Normalizer)> {
+    fn new(kwargs: Option<&PyDict>) -> PyResult<(Self, PyNormalizer)> {
         let mut clean_text = true;
         let mut handle_chinese_chars = true;
         let mut strip_accents = None;
@@ -66,108 +107,71 @@ impl BertNormalizer {
                 }
             }
         }
-
-        Ok((
-            BertNormalizer {},
-            Normalizer {
-                normalizer: Container::Owned(Box::new(tk::normalizers::bert::BertNormalizer::new(
-                    clean_text,
-                    handle_chinese_chars,
-                    strip_accents,
-                    lowercase,
-                ))),
-            },
-        ))
+        let normalizer =
+            BertNormalizer::new(clean_text, handle_chinese_chars, strip_accents, lowercase);
+        Ok((PyBertNormalizer {}, normalizer.into()))
     }
 }
 
-#[pyclass(extends=Normalizer, module = "tokenizers.normalizers")]
-pub struct NFD {}
+#[pyclass(extends=PyNormalizer, module = "tokenizers.normalizers", name=NFD)]
+pub struct PyNFD {}
 #[pymethods]
-impl NFD {
+impl PyNFD {
     #[new]
-    fn new() -> PyResult<(Self, Normalizer)> {
-        Ok((
-            NFD {},
-            Normalizer {
-                normalizer: Container::Owned(Box::new(tk::normalizers::unicode::NFD)),
-            },
-        ))
+    fn new() -> PyResult<(Self, PyNormalizer)> {
+        Ok((PyNFD {}, PyNormalizer::new(NFD.into())))
     }
 }
 
-#[pyclass(extends=Normalizer, module = "tokenizers.normalizers")]
-pub struct NFKD {}
+#[pyclass(extends=PyNormalizer, module = "tokenizers.normalizers", name=NFKD)]
+pub struct PyNFKD {}
 #[pymethods]
-impl NFKD {
+impl PyNFKD {
     #[new]
-    fn new() -> PyResult<(Self, Normalizer)> {
-        Ok((
-            NFKD {},
-            Normalizer {
-                normalizer: Container::Owned(Box::new(tk::normalizers::unicode::NFKD)),
-            },
-        ))
+    fn new() -> PyResult<(Self, PyNormalizer)> {
+        Ok((PyNFKD {}, NFKD.into()))
     }
 }
 
-#[pyclass(extends=Normalizer, module = "tokenizers.normalizers")]
-pub struct NFC {}
+#[pyclass(extends=PyNormalizer, module = "tokenizers.normalizers", name=NFC)]
+pub struct PyNFC {}
 #[pymethods]
-impl NFC {
+impl PyNFC {
     #[new]
-    fn new() -> PyResult<(Self, Normalizer)> {
-        Ok((
-            NFC {},
-            Normalizer {
-                normalizer: Container::Owned(Box::new(tk::normalizers::unicode::NFC)),
-            },
-        ))
+    fn new() -> PyResult<(Self, PyNormalizer)> {
+        Ok((PyNFC {}, NFC.into()))
     }
 }
 
-#[pyclass(extends=Normalizer, module = "tokenizers.normalizers")]
-pub struct NFKC {}
+#[pyclass(extends=PyNormalizer, module = "tokenizers.normalizers", name=NFKC)]
+pub struct PyNFKC {}
 #[pymethods]
-impl NFKC {
+impl PyNFKC {
     #[new]
-    fn new() -> PyResult<(Self, Normalizer)> {
-        Ok((
-            NFKC {},
-            Normalizer {
-                normalizer: Container::Owned(Box::new(tk::normalizers::unicode::NFKC)),
-            },
-        ))
+    fn new() -> PyResult<(Self, PyNormalizer)> {
+        Ok((PyNFKC {}, NFKC.into()))
     }
 }
 
-#[pyclass(extends=Normalizer, module = "tokenizers.normalizers")]
-pub struct Sequence {}
+#[pyclass(extends=PyNormalizer, module = "tokenizers.normalizers", name=Sequence)]
+pub struct PySequence {}
 #[pymethods]
-impl Sequence {
+impl PySequence {
     #[new]
-    fn new(normalizers: &PyList) -> PyResult<(Self, Normalizer)> {
-        let normalizers = normalizers
-            .iter()
-            .map(|n| {
-                let mut normalizer: PyRefMut<Normalizer> = n.extract()?;
-                if let Some(normalizer) = normalizer.normalizer.to_pointer() {
-                    Ok(normalizer)
-                } else {
-                    Err(exceptions::Exception::py_err(
-                        "At least one normalizer is already being used in another Tokenizer",
-                    ))
+    fn new(normalizers: &PyList) -> PyResult<(Self, PyNormalizer)> {
+        let mut sequence = Vec::with_capacity(normalizers.len());
+        for n in normalizers.iter() {
+            let normalizer: PyRef<PyNormalizer> = n.extract()?;
+            match &normalizer.normalizer {
+                PyNormalizerWrapper::Sequence(inner) => {
+                    sequence.extend(inner.iter().map(|i| i.clone()))
                 }
-            })
-            .collect::<PyResult<_>>()?;
-
+                PyNormalizerWrapper::Wrapped(inner) => sequence.push(inner.clone()),
+            }
+        }
         Ok((
-            Sequence {},
-            Normalizer {
-                normalizer: Container::Owned(Box::new(tk::normalizers::utils::Sequence::new(
-                    normalizers,
-                ))),
-            },
+            PySequence {},
+            PyNormalizer::new(PyNormalizerWrapper::Sequence(sequence)),
         ))
     }
 
@@ -176,28 +180,23 @@ impl Sequence {
     }
 }
 
-#[pyclass(extends=Normalizer, module = "tokenizers.normalizers")]
-pub struct Lowercase {}
+#[pyclass(extends=PyNormalizer, module = "tokenizers.normalizers", name=Lowercase)]
+pub struct PyLowercase {}
 #[pymethods]
-impl Lowercase {
+impl PyLowercase {
     #[new]
-    fn new() -> PyResult<(Self, Normalizer)> {
-        Ok((
-            Lowercase {},
-            Normalizer {
-                normalizer: Container::Owned(Box::new(tk::normalizers::utils::Lowercase)),
-            },
-        ))
+    fn new() -> PyResult<(Self, PyNormalizer)> {
+        Ok((PyLowercase {}, Lowercase.into()))
     }
 }
 
-#[pyclass(extends=Normalizer, module = "tokenizers.normalizers")]
-pub struct Strip {}
+#[pyclass(extends=PyNormalizer, module = "tokenizers.normalizers", name=Strip)]
+pub struct PyStrip {}
 #[pymethods]
-impl Strip {
+impl PyStrip {
     #[new]
     #[args(kwargs = "**")]
-    fn new(kwargs: Option<&PyDict>) -> PyResult<(Self, Normalizer)> {
+    fn new(kwargs: Option<&PyDict>) -> PyResult<(Self, PyNormalizer)> {
         let mut left = true;
         let mut right = true;
 
@@ -210,13 +209,114 @@ impl Strip {
             }
         }
 
-        Ok((
-            Strip {},
-            Normalizer {
-                normalizer: Container::Owned(Box::new(tk::normalizers::strip::Strip::new(
-                    left, right,
-                ))),
+        Ok((PyStrip {}, Strip::new(left, right).into()))
+    }
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(untagged)]
+pub(crate) enum PyNormalizerWrapper {
+    Sequence(Vec<Arc<NormalizerWrapper>>),
+    Wrapped(Arc<NormalizerWrapper>),
+}
+
+impl Serialize for PyNormalizerWrapper {
+    fn serialize<S>(&self, serializer: S) -> Result<<S as Serializer>::Ok, <S as Serializer>::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            PyNormalizerWrapper::Sequence(seq) => {
+                let mut ser = serializer.serialize_struct("Sequence", 2)?;
+                ser.serialize_field("type", "Sequence")?;
+                ser.serialize_field("normalizers", seq)?;
+                ser.end()
+            }
+            PyNormalizerWrapper::Wrapped(inner) => inner.serialize(serializer),
+        }
+    }
+}
+
+impl<I> From<I> for PyNormalizerWrapper
+where
+    I: Into<NormalizerWrapper>,
+{
+    fn from(norm: I) -> Self {
+        PyNormalizerWrapper::Wrapped(Arc::new(norm.into()))
+    }
+}
+
+impl<I> From<I> for PyNormalizer
+where
+    I: Into<NormalizerWrapper>,
+{
+    fn from(norm: I) -> Self {
+        PyNormalizer {
+            normalizer: norm.into().into(),
+        }
+    }
+}
+
+impl Normalizer for PyNormalizerWrapper {
+    fn normalize(&self, normalized: &mut NormalizedString) -> tk::Result<()> {
+        match self {
+            PyNormalizerWrapper::Wrapped(inner) => inner.normalize(normalized),
+            PyNormalizerWrapper::Sequence(inner) => {
+                inner.iter().map(|n| n.normalize(normalized)).collect()
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use pyo3::{AsPyRef, Python};
+    use tk::normalizers::unicode::{NFC, NFKC};
+    use tk::normalizers::utils::Sequence;
+    use tk::normalizers::NormalizerWrapper;
+
+    use crate::normalizers::{PyNormalizer, PyNormalizerWrapper};
+
+    #[test]
+    fn get_subtype() {
+        let py_norm = PyNormalizer::new(NFC.into());
+        let py_nfc = py_norm.get_as_subtype().unwrap();
+        let gil = Python::acquire_gil();
+        assert_eq!(
+            "tokenizers.normalizers.NFC",
+            py_nfc.as_ref(gil.python()).get_type().name()
+        );
+    }
+
+    #[test]
+    fn serialize() {
+        let py_wrapped: PyNormalizerWrapper = NFKC.into();
+        let py_ser = serde_json::to_string(&py_wrapped).unwrap();
+        let rs_wrapped = NormalizerWrapper::NFKC(NFKC);
+        let rs_ser = serde_json::to_string(&rs_wrapped).unwrap();
+        assert_eq!(py_ser, rs_ser);
+        let py_norm: PyNormalizer = serde_json::from_str(&rs_ser).unwrap();
+        match py_norm.normalizer {
+            PyNormalizerWrapper::Wrapped(nfc) => match nfc.as_ref() {
+                NormalizerWrapper::NFKC(_) => {}
+                _ => panic!("Expected NFKC"),
             },
-        ))
+            _ => panic!("Expected wrapped, not sequence."),
+        }
+
+        let py_seq: PyNormalizerWrapper = Sequence::new(vec![NFC.into(), NFKC.into()]).into();
+        let py_wrapper_ser = serde_json::to_string(&py_seq).unwrap();
+        let rs_wrapped =
+            NormalizerWrapper::Sequence(Sequence::new(vec![NFC.into(), NFKC.into()]).into());
+        let rs_ser = serde_json::to_string(&rs_wrapped).unwrap();
+        assert_eq!(py_wrapper_ser, rs_ser);
+
+        let py_seq = PyNormalizer::new(py_seq);
+        let py_ser = serde_json::to_string(&py_seq).unwrap();
+        assert_eq!(py_wrapper_ser, py_ser);
+
+        let rs_seq = Sequence::new(vec![NFC.into(), NFKC.into()]);
+        let rs_ser = serde_json::to_string(&rs_seq).unwrap();
+        assert_eq!(py_wrapper_ser, rs_ser);
     }
 }

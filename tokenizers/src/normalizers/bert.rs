@@ -1,4 +1,5 @@
 use crate::tokenizer::{NormalizedString, Normalizer, Result};
+
 use serde::{Deserialize, Serialize};
 use unicode_categories::UnicodeCategories;
 
@@ -48,7 +49,8 @@ fn is_chinese_char(c: char) -> bool {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, Deserialize, Serialize)]
+#[serde(tag = "type")]
 pub struct BertNormalizer {
     /// Whether to do the bert basic cleaning:
     ///   1. Remove any control characters
@@ -115,7 +117,6 @@ impl BertNormalizer {
     }
 }
 
-#[typetag::serde]
 impl Normalizer for BertNormalizer {
     fn normalize(&self, normalized: &mut NormalizedString) -> Result<()> {
         if self.clean_text {

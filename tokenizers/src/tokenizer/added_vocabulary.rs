@@ -1,4 +1,7 @@
-use super::{Model, NormalizedString, Normalizer, Range};
+use super::{
+    normalizer::Range, ByteOffsets, Model, NormalizedString, Normalizer, Offsets,
+    PreTokenizedString,
+};
 use serde::{ser::SerializeSeq, Deserialize, Serialize, Serializer};
 use std::collections::{HashMap, HashSet};
 
@@ -56,7 +59,7 @@ impl AddedToken {
         self
     }
     /// Retrive the pattern built for this token, according to all the specified parameters.
-    pub fn get_pattern(&self, normalizer: Option<&dyn Normalizer>) -> String {
+    pub fn get_pattern<N: Normalizer>(&self, normalizer: Option<&N>) -> String {
         let mut r = if self.single_word {
             let first_b = self
                 .content
@@ -84,7 +87,7 @@ impl AddedToken {
                 .unwrap();
 
             // Normalize the content
-            let mut content = NormalizedString::from(&self.content);
+            let mut content = NormalizedString::from(self.content.as_ref());
             normalizer.map(|n| n.normalize(&mut content));
             format!(r"{}{}{}", first_b, regex::escape(content.get()), last_b)
         } else {
@@ -144,6 +147,7 @@ type MatchingSet = (regex::RegexSet, Vec<u32>);
 /// were to add new tokens after this training process, we couldn't make sure the merges pairs
 /// exist as required.
 ///
+#[derive(Clone, Debug)]
 pub(super) struct AddedVocabulary {
     /// Contains the mapping from String (token content) to ID. This map contains both special
     /// tokens and classic added tokens that were added to the this vocabulary.
@@ -191,7 +195,7 @@ impl AddedVocabulary {
     }
 
     /// Get the id matching one of our token if it exists
-    pub fn token_to_id(&self, token: &str, model: &dyn Model) -> Option<u32> {
+    pub fn token_to_id(&self, token: &str, model: &impl Model) -> Option<u32> {
         self.added_tokens_map
             .get(token)
             .copied()
@@ -199,7 +203,7 @@ impl AddedVocabulary {
     }
 
     /// Get the token matching the given id if it exists
-    pub fn id_to_token<'s>(&'s self, id: u32, model: &'s dyn Model) -> Option<&'s str> {
+    pub fn id_to_token<'s>(&'s self, id: u32, model: &'s impl Model) -> Option<&'s str> {
         self.added_tokens_map_r
             .get(&id)
             .map(|t| t.content.as_ref())
@@ -212,11 +216,11 @@ impl AddedVocabulary {
     }
 
     /// Add some special tokens to the vocabulary
-    pub fn add_special_tokens(
+    pub fn add_special_tokens<N: Normalizer>(
         &mut self,
         tokens: &[AddedToken],
-        model: &dyn Model,
-        normalizer: Option<&dyn Normalizer>,
+        model: &impl Model,
+        normalizer: Option<&N>,
     ) -> usize {
         for token in tokens {
             if !token.content.is_empty() && !self.special_tokens_set.contains(&token.content) {
@@ -229,11 +233,11 @@ impl AddedVocabulary {
     }
 
     /// Add some tokens to the vocabulary
-    pub fn add_tokens(
+    pub fn add_tokens<N: Normalizer>(
         &mut self,
         tokens: &[AddedToken],
-        model: &dyn Model,
-        normalizer: Option<&dyn Normalizer>,
+        model: &impl Model,
+        normalizer: Option<&N>,
     ) -> usize {
         let mut ignored = 0;
         for token in tokens {
@@ -273,7 +277,7 @@ impl AddedVocabulary {
     ///
     /// We keep two different RegexSet, one that will take care of matching against the
     /// non-normalized string, and one matching against the normalized one.
-    fn refresh_added_tokens(&mut self, model: &dyn Model, normalizer: Option<&dyn Normalizer>) {
+    fn refresh_added_tokens<N: Normalizer>(&mut self, model: &impl Model, normalizer: Option<&N>) {
         type TupleTokenId<'a> = (&'a AddedToken, u32);
         let (normalized, non_normalized): (Vec<TupleTokenId>, Vec<TupleTokenId>) = self
             .special_tokens
@@ -301,20 +305,27 @@ impl AddedVocabulary {
         );
     }
 
-    /// Extract any AddedToken from the sentence, using the provided MatchingSet
-    fn extract(
+    /// Find any AddedToken in the given sentence, using the provided MatchingSet.
+    /// This method returns a list "splits", each of them being a pair of ByteOffsets
+    /// and an optional ID if it is an AddedToken.
+    /// The list of splits cover the entire input string.
+    fn find_matches<'a>(
         &self,
-        sentence: NormalizedString,
-        split_re: &MatchingSet,
-    ) -> Vec<(NormalizedString, Option<u32>)> {
+        sentence: &str,
+        split_re: &'a MatchingSet,
+    ) -> Vec<(Option<u32>, ByteOffsets)> {
+        if sentence.is_empty() {
+            return vec![(None, (0, 0))];
+        }
+
         let mut matches = split_re
             .0
-            .matches(sentence.get())
+            .matches(sentence)
             .into_iter()
             .flat_map(|idx| {
                 regex::Regex::new(&split_re.0.patterns()[idx])
                     .unwrap()
-                    .find_iter(sentence.get())
+                    .find_iter(sentence)
                     .map(|m| (idx, (m.start(), m.end())))
                     .collect::<Vec<_>>()
             })
@@ -376,35 +387,43 @@ impl AddedVocabulary {
                 if start_offset < start {
                     splits.push((None, (start_offset, start)));
                 }
-                splits.push((Some(idx), (start, end)));
+                splits.push((Some(split_re.1[idx] as u32), (start, end)));
                 start_offset = end;
 
                 splits
             })
             .collect::<Vec<_>>();
-        if let Some((_, (_, end))) = splits.iter().last().copied() {
-            if end < sentence.get().len() {
-                splits.push((None, (end, sentence.get().len())));
-            }
+
+        let total_byte_len = sentence.len();
+        if start_offset != total_byte_len {
+            splits.push((None, (start_offset, total_byte_len)));
         }
 
-        if splits.is_empty() {
-            vec![(sentence, None)]
-        } else {
-            splits
-                .into_iter()
-                .map(|(idx, (start, end))| {
-                    let normalized = sentence
-                        .slice_bytes(Range::Normalized(start..end))
-                        .expect("Error while extracting normalized Range");
+        splits
+    }
 
-                    // Find out the associated AddedToken, and its id
-                    let id = idx.map(|idx| split_re.1[idx]);
+    /// Split the input sentence to extract anything we found from the `MatchingSet`, as well as
+    /// the list of corresponding IDs
+    /// The list of IDs have the exact same number of elements than the Iterator.
+    fn split_with_indices(
+        &self,
+        sentence: NormalizedString,
+        split_re: &MatchingSet,
+    ) -> (Vec<Option<u32>>, impl Iterator<Item = NormalizedString>) {
+        let (indices, byte_offsets) = self
+            .find_matches(sentence.get(), split_re)
+            .into_iter()
+            .unzip::<_, _, Vec<_>, Vec<_>>();
 
-                    (normalized, id)
-                })
-                .collect()
-        }
+        // Return the indices and the split normalized string
+        (
+            indices,
+            byte_offsets.into_iter().map(move |(start, end)| {
+                sentence
+                    .slice_bytes(Range::Normalized(start..end))
+                    .expect("Error while extracting normalized Range")
+            }),
+        )
     }
 
     /// Extract the additional vocabulary from the given sentence, normalizing it along the way.
@@ -414,31 +433,58 @@ impl AddedVocabulary {
     /// input sentence `I read a book Yesterday`, if the normalizer is supposed to lowercase
     /// everything, we expect a match.
     ///
-    /// This method returns a `Vec` of `(NormalizedString, Option<u32>)`, where the optional `u32`
-    /// contains the relevant ID if this is an additional token.
-    pub fn extract_and_normalize(
-        &self,
-        normalizer: Option<&dyn Normalizer>,
-        sentence: &str,
-    ) -> Vec<(NormalizedString, Option<u32>)> {
+    /// This method returns an iterator over `(NormalizedString, Offsets, Option<u32>)`, where the
+    /// optional `u32` contains the relevant ID if this is an additional token. The offsets being
+    /// returned here are in the `original` referential. They are the offsets of the given part
+    /// in the original input
+    pub fn extract_and_normalize<'a, N: Normalizer>(
+        &'a self,
+        normalizer: Option<&N>,
+        sequence: &str,
+    ) -> impl Iterator<Item = (NormalizedString, Offsets, Option<u32>)> + 'a {
+        let mut pretokenized: PreTokenizedString = sequence.into();
         // 1. We extract all the non-normalized tokens from the non-normalized string
-        let pieces = self.extract(NormalizedString::from(sentence), &self.split_re);
+        let mut indices = vec![];
+        pretokenized
+            .split(|_, sequence| {
+                let (idcs, split) = self.split_with_indices(sequence, &self.split_re);
+                indices = idcs;
+                Ok(split)
+            })
+            .expect("AddedVocabulary bad split");
 
         // 2. Then extract the normalized tokens from the normalized pieces of the string
-        pieces
-            .into_iter()
-            .flat_map(|(mut normalized, id)| {
-                if id.is_some() {
-                    // If the piece has an associated ID, we already extracted something,
-                    // so we just return it
-                    vec![(normalized, id)]
+        let mut multi_indices = vec![];
+        pretokenized
+            .split(|i, mut sequence| {
+                if let Some(id) = indices[i] {
+                    multi_indices.push(Some(id));
+                    Ok(itertools::Either::Left(std::iter::once(sequence)))
                 } else {
-                    // Otherwise, we need to normalized the string, and then proceed to extracting
-                    normalizer.map(|n| n.normalize(&mut normalized));
-                    self.extract(normalized, &self.split_normalized_re)
+                    normalizer.map(|n| n.normalize(&mut sequence));
+
+                    if sequence.is_empty() {
+                        Ok(itertools::Either::Left(std::iter::once(sequence)))
+                    } else {
+                        let (idcs, split) =
+                            self.split_with_indices(sequence, &self.split_normalized_re);
+                        multi_indices.extend(idcs);
+                        Ok(itertools::Either::Right(split))
+                    }
                 }
             })
-            .collect::<Vec<_>>()
+            .expect("AddedVocabulary bad split");
+
+        pretokenized
+            .into_iter()
+            .zip(multi_indices)
+            .map(|(substring, id)| {
+                (
+                    substring.normalized,
+                    substring.original_offsets,
+                    id.map(|i| i as u32),
+                )
+            })
     }
 }
 
@@ -484,7 +530,8 @@ impl Serialize for AddedVocabulary {
 mod tests {
     use super::*;
     use crate::normalizers::utils::Lowercase;
-    use crate::{Offsets, Result, Token};
+    use crate::normalizers::NormalizerWrapper;
+    use crate::{Result, Token};
     use std::path::{Path, PathBuf};
 
     #[derive(Serialize, Deserialize)]
@@ -510,9 +557,9 @@ mod tests {
             }
         }
     }
-    #[typetag::serde]
+
     impl Model for ModelMock {
-        fn tokenize(&self, _tokens: Vec<(String, Offsets)>) -> Result<Vec<Token>> {
+        fn tokenize(&self, _sequence: &str) -> Result<Vec<Token>> {
             unimplemented!()
         }
         fn token_to_id(&self, token: &str) -> Option<u32> {
@@ -536,10 +583,15 @@ mod tests {
     fn can_add_tokens() {
         let model = ModelMock::new(&[("test", 0), ("tost", 1)]);
         let mut vocab = AddedVocabulary::new();
+        let normalizer: Option<&NormalizerWrapper> = None;
 
         // Add tokens normally
         assert_eq!(
-            vocab.add_tokens(&[AddedToken::from("added_token_1", false)], &model, None),
+            vocab.add_tokens(
+                &[AddedToken::from("added_token_1", false)],
+                &model,
+                normalizer
+            ),
             1
         );
         assert_eq!(vocab.len(), 1);
@@ -552,7 +604,7 @@ mod tests {
                     AddedToken::from("added_token_2", false)
                 ],
                 &model,
-                None
+                normalizer
             ),
             1
         );
@@ -560,7 +612,7 @@ mod tests {
 
         // Does not add tokens already covered by the model
         assert_eq!(
-            vocab.add_tokens(&[AddedToken::from("test", false)], &model, None),
+            vocab.add_tokens(&[AddedToken::from("test", false)], &model, normalizer),
             0
         );
         assert_eq!(vocab.len(), 2);
@@ -570,10 +622,14 @@ mod tests {
     fn can_add_special_tokens() {
         let model = ModelMock::new(&[("test", 0), ("tost", 1)]);
         let mut vocab = AddedVocabulary::new();
-
+        let normalizer: Option<&NormalizerWrapper> = None;
         // Add tokens normally
         assert_eq!(
-            vocab.add_special_tokens(&[AddedToken::from("added_token_1", true)], &model, None),
+            vocab.add_special_tokens(
+                &[AddedToken::from("added_token_1", true)],
+                &model,
+                normalizer
+            ),
             1
         );
         assert_eq!(vocab.len(), 1);
@@ -586,7 +642,7 @@ mod tests {
                     AddedToken::from("added_token_2", true)
                 ],
                 &model,
-                None
+                normalizer
             ),
             1
         );
@@ -594,7 +650,7 @@ mod tests {
 
         // Can add tokens already covered by the model
         assert_eq!(
-            vocab.add_special_tokens(&[AddedToken::from("test", true)], &model, None),
+            vocab.add_special_tokens(&[AddedToken::from("test", true)], &model, normalizer),
             0
         );
         assert_eq!(vocab.len(), 2); // Did not add a new token, since it exist in the original model
@@ -607,6 +663,7 @@ mod tests {
         // Is able to extract both normal and special tokens
         let model = ModelMock::new(&[]);
         let mut vocab = AddedVocabulary::new();
+        let normalizer: Option<&NormalizerWrapper> = None;
 
         vocab.add_tokens(
             &[
@@ -614,7 +671,7 @@ mod tests {
                 AddedToken::from("name", false),
             ],
             &model,
-            None,
+            normalizer,
         );
         vocab.add_special_tokens(
             &[
@@ -622,21 +679,23 @@ mod tests {
                 AddedToken::from("[SEP]", true),
             ],
             &model,
-            None,
+            normalizer,
         );
 
-        let result = vocab.extract_and_normalize(None, "[CLS] My name is Anthony [SEP]");
+        let result = vocab
+            .extract_and_normalize(normalizer, "[CLS] My name is Anthony [SEP]")
+            .collect::<Vec<_>>();
         assert_eq!(
             result
                 .iter()
-                .map(|(normalized, id)| (normalized.get(), *id))
+                .map(|(normalized, _, id)| (normalized.get(), id))
                 .collect::<Vec<_>>(),
             vec![
-                ("[CLS]", Some(2)),
-                (" My ", None),
-                ("name", Some(1)),
-                (" is Anthony ", None),
-                ("[SEP]", Some(3))
+                ("[CLS]", &Some(2)),
+                (" My ", &None),
+                ("name", &Some(1)),
+                (" is Anthony ", &None),
+                ("[SEP]", &Some(3))
             ]
         );
     }
@@ -667,23 +726,32 @@ mod tests {
             Some(&normalizer),
         );
 
-        let result =
-            vocab.extract_and_normalize(Some(&normalizer), "[CLS] My name is Anthony [SEP]");
+        let result = vocab
+            .extract_and_normalize(Some(&normalizer), "[CLS] My name is Anthony [SEP]")
+            .collect::<Vec<_>>();
+
         assert_eq!(
             result
                 .iter()
-                .map(|(normalized, id)| (normalized.get(), *id))
+                .map(|(normalized, _, id)| (normalized.get(), id))
                 .collect::<Vec<_>>(),
             vec![
-                ("[CLS]", Some(3)),
+                ("[CLS]", &Some(3)),
                 // This one includes both spaces because of the lstrip & rstrip
                 // And it matches because normalized == true
-                (" my ", Some(0)),
-                ("name", Some(1)),
+                (" my ", &Some(0)),
+                ("name", &Some(1)),
                 // `ony` is not extracted here thanks to single_word
-                (" is anthony ", None),
-                ("[SEP]", Some(4))
+                (" is anthony ", &None),
+                ("[SEP]", &Some(4)),
             ]
         );
+    }
+
+    #[test]
+    fn empty_matches() {
+        let vocab = AddedVocabulary::new();
+        let matches = vocab.find_matches("", &vocab.split_re);
+        assert_eq!(matches, vec![(None, (0, 0))]);
     }
 }

@@ -1,5 +1,15 @@
+#![allow(clippy::reversed_empty_ranges)]
+
+use crate::pattern::Pattern;
+use crate::{Offsets, Result};
 use std::ops::{Bound, RangeBounds};
 use unicode_normalization_alignments::UnicodeNormalization;
+
+/// The possible offsets referential
+pub enum OffsetReferential {
+    Original,
+    Normalized,
+}
 
 /// Represents a Range usable by the NormalizedString to index its content.
 /// A Range can use indices relative to either the `Original` or the `Normalized` string
@@ -42,34 +52,39 @@ where
     }
 }
 
-/// A `NormalizedString` takes care of processing an "original" string to modify it and obtain a
-/// "normalized" string. It keeps both version of the string, alignments information between both
-/// and provides an interface to retrieve ranges of each string, using offsets from any of them.
+/// Defines the expected behavior for the delimiter of a Split Pattern
+/// When splitting on `'-'` for example, with input `the-final--countdown`:
+///  - Removed => `[ "the", "final", "countdown" ]`
+///  - Isolated => `[ "the", "-", "final", "-", "-", "countdown" ]`
+///  - MergedWithPrevious => `[ "the-", "final-", "-", "countdown" ]`
+///  - MergedWithNext => `[ "the", "-final", "-", "-countdown" ]`
+pub enum SplitDelimiterBehavior {
+    Removed,
+    Isolated,
+    MergedWithPrevious,
+    MergedWithNext,
+}
+
+/// A `NormalizedString` takes care of processing an "original" string to modify
+/// it and obtain a "normalized" string. It keeps both version of the string,
+/// alignments information between both and provides an interface to retrieve
+/// ranges of each string, using offsets from any of them.
 ///
-/// It is possible to retrieve a part of the original string, by indexing it with offsets from the
-/// normalized one, and the other way around too. It is also possible to convert offsets from one
-/// referential to the other one easily.
+/// It is possible to retrieve a part of the original string, by indexing it with
+/// offsets from the normalized one, and the other way around too. It is also
+/// possible to convert offsets from one referential to the other one easily.
 #[derive(Default, Debug, Clone, PartialEq)]
 pub struct NormalizedString {
     /// The original version of the string, before any modification
     original: String,
     /// The normalized version of the string, after all modifications
     normalized: String,
-    /// Mapping from normalized string to original one: (start, end) for each character of the
-    /// normalized string
+    /// Mapping from normalized string to original one: (start, end) for each
+    /// character of the normalized string
     alignments: Vec<(usize, usize)>,
 }
 
 impl NormalizedString {
-    /// Create a NormalizedString from the given str
-    pub fn from(s: &str) -> Self {
-        NormalizedString {
-            original: s.to_owned(),
-            normalized: s.to_owned(),
-            alignments: (0..s.chars().count()).map(|v| (v, v + 1)).collect(),
-        }
-    }
-
     /// Return the normalized string
     pub fn get(&self) -> &str {
         &self.normalized
@@ -80,6 +95,16 @@ impl NormalizedString {
         &self.original
     }
 
+    /// Return the offsets of the normalized part
+    pub fn offsets(&self) -> Offsets {
+        (0, self.len())
+    }
+
+    /// Return the offsets of the original part
+    pub fn offsets_original(&self) -> Offsets {
+        (0, self.len_original())
+    }
+
     /// Convert the given offsets range from one referential to the other one:
     /// `Original => Normalized` or `Normalized => Original`
     pub fn convert_offsets<T>(&self, range: Range<T>) -> Option<std::ops::Range<usize>>
@@ -88,39 +113,72 @@ impl NormalizedString {
     {
         match range {
             Range::Original(_) => {
-                let (mut start, mut end) = (0, 0);
-                let r = range.into_full_range(self.alignments.last().map_or(0, |(_, e)| *e));
+                let (mut start, mut end) = (None, None);
+                let target = range.into_full_range(self.len_original());
+
+                // If we target before the start of the normalized string
+                if let Some((start, _)) = self.alignments.first() {
+                    if target.end <= *start {
+                        return Some(0..0);
+                    }
+                }
+                // If we target after the end of the normalized string
+                if let Some((_, end)) = self.alignments.last() {
+                    if target.start >= *end {
+                        let len = self.len();
+                        return Some(len..len);
+                    }
+                }
+
+                // Otherwise lets find the range
                 self.alignments
                     .iter()
                     .enumerate()
-                    .take_while(|(_, alignment)| r.end >= alignment.1)
+                    .take_while(|(_, alignment)| target.end >= alignment.1)
                     .for_each(|(i, alignment)| {
-                        if alignment.0 <= r.start {
-                            start = i;
+                        if alignment.0 >= target.start && start.is_none() {
+                            // Here we want to keep the first char in the normalized string
+                            // that is on or *after* the target start.
+                            start = Some(i);
                         }
-                        if alignment.1 <= r.end {
-                            end = i + 1;
+                        if alignment.1 <= target.end {
+                            end = Some(i + 1);
                         }
                     });
-                Some(start..end)
+
+                // If we didn't find the start, let's use the end of the normalized string
+                let start = start.unwrap_or_else(|| self.len());
+                // The end must be greater or equal to start, and might be None otherwise
+                let end = end.filter(|e| *e >= start);
+
+                Some(start..end?)
             }
-            Range::Normalized(_) => self
-                .alignments
-                .get(range.into_full_range(self.alignments.len()))
-                .map(|alignments| {
-                    if alignments.is_empty() {
-                        None
-                    } else {
-                        let start = alignments[0].0;
-                        let end = alignments[alignments.len() - 1].1;
-                        Some(start..end)
-                    }
-                })
-                .flatten(),
+            Range::Normalized(_) => {
+                // If we target 0..0 on an empty normalized string, we want to return the
+                // entire original one
+                let range = range.into_full_range(self.len());
+
+                if self.alignments.is_empty() && range == (0..0) {
+                    Some(0..self.len_original())
+                } else {
+                    self.alignments
+                        .get(range)
+                        .map(|alignments| {
+                            if alignments.is_empty() {
+                                None
+                            } else {
+                                let start = alignments[0].0;
+                                let end = alignments[alignments.len() - 1].1;
+                                Some(start..end)
+                            }
+                        })
+                        .flatten()
+                }
+            }
         }
     }
 
-    /// Return a range of the normalized string (indexing on char not bytes)
+    /// Return a range of the normalized string (indexing on char, not bytes)
     pub fn get_range<T>(&self, range: Range<T>) -> Option<&str>
     where
         T: RangeBounds<usize> + Clone,
@@ -134,7 +192,7 @@ impl NormalizedString {
         }
     }
 
-    /// Return a range of the original string (indexing on char not bytes)
+    /// Return a range of the original string (indexing on char, not bytes)
     pub fn get_range_original<T>(&self, range: Range<T>) -> Option<&str>
     where
         T: RangeBounds<usize> + Clone,
@@ -148,7 +206,16 @@ impl NormalizedString {
         }
     }
 
-    /// Return a new NormalizedString that contains only the specified range, indexing on bytes
+    /// Return a new NormalizedString that contains only the specified range,
+    /// indexing on bytes. Any range that splits a UTF-8 char will return None.
+    ///
+    /// If we want a slice of the `NormalizedString` based on a `Range::Normalized``,
+    /// the original part of the `NormalizedString` will contain any "additional"
+    /// content on the right, and also on the left. The left will be included
+    /// only if we are retrieving the very beginning of the string, since there
+    /// is no previous part. The right is always included, up to what's covered
+    /// by the next part of the normalized string.  This is important to be able
+    /// to build a new `NormalizedString` from multiple contiguous slices
     pub fn slice_bytes<T>(&self, range: Range<T>) -> Option<NormalizedString>
     where
         T: RangeBounds<usize> + Clone,
@@ -164,7 +231,11 @@ impl NormalizedString {
             ),
         };
 
-        let (mut start, mut end) = (None, None);
+        let (mut start, mut end) = if r == (0..0) {
+            (Some(0), Some(0))
+        } else {
+            (None, None)
+        };
         s.char_indices()
             .enumerate()
             .take_while(|(_, (b, _))| *b < r.end)
@@ -184,18 +255,53 @@ impl NormalizedString {
         }
     }
 
-    /// Return a new NormalizedString that contains only the specified range, indexing on char
+    /// Return a new NormalizedString that contains only the specified range,
+    /// indexing on char
+    ///
+    /// If we want a slice of the `NormalizedString` based on a `Range::Normalized``,
+    /// the original part of the `NormalizedString` will contain any "additional"
+    /// content on the right, and also on the left. The left will be included
+    /// only if we are retrieving the very beginning of the string, since there
+    /// is no previous part. The right is always included, up to what's covered
+    /// by the next part of the normalized string.  This is important to be able
+    /// to build a new `NormalizedString` from multiple contiguous slices
     pub fn slice<T>(&self, range: Range<T>) -> Option<NormalizedString>
     where
         T: RangeBounds<usize> + Clone,
     {
-        let r_original = match range {
-            Range::Original(_) => range.clone().into_full_range(self.len_original()),
-            Range::Normalized(_) => self.convert_offsets(range.clone())?,
-        };
+        let len_original = self.len_original();
+        let len_normalized = self.len();
+
+        // Find out the part of the normalized string we should keep
         let r_normalized = match range {
-            Range::Original(_) => self.convert_offsets(range)?,
-            Range::Normalized(_) => range.into_full_range(self.len()),
+            Range::Original(_) => self.convert_offsets(range.clone())?,
+            Range::Normalized(_) => range.clone().into_full_range(len_normalized),
+        };
+
+        let r_original = match range {
+            Range::Original(_) => range.into_full_range(len_original),
+            Range::Normalized(_) => {
+                let end_range = self.convert_offsets(Range::Normalized(r_normalized.end..));
+                let mut range = self.convert_offsets(range)?;
+
+                // If we take the very beginning of the normalized string, we should take
+                // all the beginning of the original too
+                if r_normalized.start == 0 && range.start != 0 {
+                    range.start = 0;
+                }
+                // If there is a void between the `end` char we target and the next one, we
+                // want to include everything in-between from the original string
+                match end_range {
+                    Some(r) if r.start > range.end => range.end = r.start,
+                    _ => {}
+                }
+                // If we target the end of the normalized but the original is longer
+                if r_normalized.end == self.alignments.len() && len_original > range.end {
+                    range.end = len_original;
+                }
+
+                range
+            }
         };
 
         // We need to shift the alignments according to the part of the original string that we
@@ -203,8 +309,12 @@ impl NormalizedString {
         let alignment_shift = r_original.start;
 
         Some(Self {
-            original: get_range_of(&self.original, r_original)?.to_owned(),
-            normalized: get_range_of(&self.normalized, r_normalized.clone())?.to_owned(),
+            original: get_range_of(&self.original, r_original)
+                .unwrap_or_default()
+                .into(),
+            normalized: get_range_of(&self.normalized, r_normalized.clone())
+                .unwrap_or_default()
+                .into(),
             alignments: self
                 .alignments
                 .get(r_normalized)?
@@ -310,7 +420,6 @@ impl NormalizedString {
     /// Prepend the given string to ourself
     pub fn prepend(&mut self, s: &str) -> &mut Self {
         self.normalized.insert_str(0, s);
-        #[allow(clippy::reversed_empty_ranges)]
         self.alignments.splice(0..0, s.chars().map(|_| (0, 0)));
         self
     }
@@ -359,6 +468,139 @@ impl NormalizedString {
         self
     }
 
+    /// Replace anything that matches the pattern with the given content.
+    pub fn replace<P: Pattern>(&mut self, pattern: P, content: &str) -> Result<()> {
+        let matches = pattern.find_matches(&self.normalized)?;
+
+        let (normalized, alignments): (String, Vec<Offsets>) = matches
+            .into_iter()
+            .flat_map(|((start, end), is_match)| {
+                let len = end - start;
+                if is_match {
+                    let original_offsets = self
+                        .convert_offsets(Range::Normalized(start..end))
+                        .expect("Bad offsets when replacing");
+
+                    // Here, since we don't know the exact alignment, each character in
+                    // the new normalized part will align to the whole replaced one.
+                    itertools::Either::Left(content.chars().zip(std::iter::repeat((
+                        original_offsets.start,
+                        original_offsets.end,
+                    ))))
+                } else {
+                    // No need to replace anything, just zip the relevant parts
+                    itertools::Either::Right(
+                        self.normalized
+                            .chars()
+                            .skip(start)
+                            .take(len)
+                            .zip(self.alignments.iter().skip(start).take(len).copied()),
+                    )
+                }
+            })
+            .unzip();
+
+        self.normalized = normalized;
+        self.alignments = alignments;
+
+        Ok(())
+    }
+
+    /// Clear the normalized part of the string
+    pub fn clear(&mut self) {
+        self.normalized = "".into();
+        self.alignments = vec![];
+    }
+
+    /// Split the current string in many subparts. Specify what to do with the
+    /// delimiter.
+    ///
+    /// This method will always ensure that the entire `self` is covered in the
+    /// produced subparts. This means that the delimiter parts will also be included,
+    /// and will appear empty if we don't want to include them (their `original`
+    /// part will still be present). It should always be possible to merge all the
+    /// subparts back to the original `NormalizedString`
+    ///
+    /// ## Splitting Behavior for the delimiter
+    ///
+    /// The behavior can be one of the followings:
+    /// When splitting on `'-'` for example, with input `the-final--countdown`:
+    ///  - Removed => `[ "the", "", "final", "", "", "countdown" ]`
+    ///  - Isolated => `[ "the", "-", "final", "-", "-", "countdown" ]`
+    ///  - MergedWithPrevious => `[ "the-", "final-", "-", "countdown" ]`
+    ///  - MergedWithNext => `[ "the", "-final", "-", "-countdown" ]`
+    pub fn split<P: Pattern>(
+        self,
+        pattern: P,
+        behavior: SplitDelimiterBehavior,
+    ) -> Result<Vec<NormalizedString>> {
+        let matches = pattern.find_matches(&self.normalized)?;
+
+        // Process the matches according to the selected behavior: Vec<(Offsets, should_remove)>
+        use SplitDelimiterBehavior::*;
+        let splits = match behavior {
+            Isolated => matches
+                .into_iter()
+                .map(|(offsets, _)| (offsets, false))
+                .collect(),
+            Removed => matches,
+            MergedWithPrevious => {
+                let mut previous_match = false;
+                matches
+                    .into_iter()
+                    .fold(vec![], |mut acc, (offsets, is_match)| {
+                        if is_match && !previous_match {
+                            if let Some(((_, end), _)) = acc.last_mut() {
+                                *end = offsets.1;
+                            } else {
+                                acc.push((offsets, false));
+                            }
+                        } else {
+                            acc.push((offsets, false));
+                        }
+                        previous_match = is_match;
+                        acc
+                    })
+            }
+            MergedWithNext => {
+                let mut previous_match = false;
+                let mut matches =
+                    matches
+                        .into_iter()
+                        .rev()
+                        .fold(vec![], |mut acc, (offsets, is_match)| {
+                            if is_match && !previous_match {
+                                if let Some(((start, _), _)) = acc.last_mut() {
+                                    *start = offsets.0;
+                                } else {
+                                    acc.push((offsets, false));
+                                }
+                            } else {
+                                acc.push((offsets, false));
+                            }
+                            previous_match = is_match;
+                            acc
+                        });
+                matches.reverse();
+                matches
+            }
+        };
+
+        // Then we split according to the computed splits
+        Ok(splits
+            .into_iter()
+            .map(|(offsets, remove)| {
+                let mut slice = self
+                    .slice(Range::Normalized(offsets.0..offsets.1))
+                    .expect("NormalizedString bad split");
+                if remove {
+                    slice.clear();
+                }
+                slice
+            })
+            .collect())
+    }
+
     /// Split off ourselves, returning a new Self that contains the range [at, len).
     /// self will then contain the range [0, at).
     /// The provided `at` indexes on `char` not bytes.
@@ -398,15 +640,15 @@ impl NormalizedString {
 
     /// Merge with the given NormalizedString by appending it to self
     pub fn merge_with(&mut self, other: &NormalizedString) {
+        let shift_len = self.len_original();
         self.original.push_str(&other.original);
-        let len = self.len() - 1;
+        self.normalized.push_str(&other.normalized);
         self.alignments.extend(
             other
                 .alignments
                 .iter()
-                .map(|(start, end)| (start + len, end + len)),
+                .map(|(start, end)| (start + shift_len, end + shift_len)),
         );
-        self.normalized.push_str(&other.normalized);
     }
 
     /// Remove any leading space(s) of the normalized string
@@ -507,10 +749,38 @@ pub fn get_range_of<T: RangeBounds<usize>>(s: &str, range: T) -> Option<&str> {
     }
 }
 
+impl From<String> for NormalizedString {
+    fn from(s: String) -> Self {
+        let len = s.chars().count();
+        Self {
+            original: s.clone(),
+            normalized: s,
+            alignments: (0..len).map(|v| (v, v + 1)).collect(),
+        }
+    }
+}
+
+impl From<&str> for NormalizedString {
+    fn from(s: &str) -> Self {
+        Self::from(s.to_owned())
+    }
+}
+
+impl std::iter::FromIterator<NormalizedString> for NormalizedString {
+    fn from_iter<I: IntoIterator<Item = NormalizedString>>(iter: I) -> NormalizedString {
+        let mut normalized: NormalizedString = "".into();
+        for sub in iter {
+            normalized.merge_with(&sub)
+        }
+        normalized
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::reversed_empty_ranges)]
     use super::*;
+    use regex::Regex;
     use unicode_categories::UnicodeCategories;
 
     #[test]
@@ -752,16 +1022,36 @@ mod tests {
 
     #[test]
     fn merge() {
+        // Merge unmodified
+        let s = NormalizedString::from("A sentence that will be merged");
+        let mut merged = NormalizedString::from("A sentence");
+        let s2 = NormalizedString::from(" that will");
+        let s3 = NormalizedString::from(" be merged");
+        merged.merge_with(&s2);
+        merged.merge_with(&s3);
+        assert_eq!(s, merged);
+
+        // Merge grown normalized
         let mut s = NormalizedString::from("A sentence that will be merged");
         s.prepend(" ");
-
         let mut merged = NormalizedString::from("A sentence");
         let s2 = NormalizedString::from(" that will");
         let s3 = NormalizedString::from(" be merged");
         merged.prepend(" ");
         merged.merge_with(&s2);
         merged.merge_with(&s3);
+        assert_eq!(s, merged);
 
+        // Merge shrinked normalized
+        let mut s = NormalizedString::from("  A sentence that will be merged  ");
+        s.strip();
+        let mut merged = NormalizedString::from("  A sentence");
+        merged.strip();
+        let s2 = NormalizedString::from(" that will");
+        let mut s3 = NormalizedString::from(" be merged  ");
+        s3.rstrip();
+        merged.merge_with(&s2);
+        merged.merge_with(&s3);
         assert_eq!(s, merged);
     }
 
@@ -848,5 +1138,79 @@ mod tests {
             })
         );
         assert_eq!(s.slice_bytes(Range::Original(0..10)), None);
+
+        // Check that we get a `None` if we try to split chars
+        for cut_at in 1..s.len() {
+            let res = s.slice_bytes(Range::Original(..cut_at));
+            // The chars in the original string all take 4 bytes.
+            assert!(if cut_at % 4 == 0 {
+                res.is_some()
+            } else {
+                res.is_none()
+            });
+        }
+    }
+
+    #[test]
+    fn slice_coverage() {
+        let mut s = NormalizedString::from(" Hello   friend ");
+        s.filter(|c| !c.is_whitespace());
+        assert_eq!(s.get(), "Hellofriend");
+
+        // Multiple slices with Normalized range
+        for cut_at in 1..s.len() {
+            let mut slices = vec![];
+            slices.push(s.slice(Range::Normalized(..cut_at)).unwrap());
+            slices.push(s.slice(Range::Normalized(cut_at..)).unwrap());
+            let rebuilt: NormalizedString = slices.into_iter().collect();
+            assert_eq!(rebuilt, s);
+        }
+
+        // Multiple slices with Original range
+        for cut_at in 1..s.len_original() {
+            let mut slices = vec![];
+            slices.push(s.slice(Range::Original(..cut_at)).unwrap());
+            slices.push(s.slice(Range::Original(cut_at..)).unwrap());
+            let rebuilt: NormalizedString = slices.into_iter().collect();
+            assert_eq!(rebuilt, s);
+        }
+    }
+
+    #[test]
+    fn replace() {
+        // Simple
+        let mut s = NormalizedString::from(" Hello   friend ");
+        s.replace(' ', "_").unwrap();
+        assert_eq!(s.get(), "_Hello___friend_");
+        let mut s = NormalizedString::from("aaaab");
+        s.replace('a', "b").unwrap();
+        assert_eq!(s.get(), "bbbbb");
+
+        // Overlapping
+        let mut s = NormalizedString::from("aaaab");
+        s.replace("aaa", "b").unwrap();
+        assert_eq!(s.get(), "bab");
+
+        // Regex
+        let mut s = NormalizedString::from(" Hello   friend ");
+        let re = Regex::new(r"\s+").unwrap();
+        s.replace(&re, "_").unwrap();
+        assert_eq!(s.get(), "_Hello_friend_");
+    }
+
+    #[test]
+    fn split() {
+        use SplitDelimiterBehavior::*;
+        let s = NormalizedString::from("The-final--countdown");
+
+        let test = |behavior: SplitDelimiterBehavior, result: Vec<&str>| {
+            let splits = s.clone().split('-', behavior).unwrap();
+            assert_eq!(splits.iter().map(|n| n.get()).collect::<Vec<_>>(), result);
+        };
+
+        test(Removed, vec!["The", "", "final", "", "", "countdown"]);
+        test(Isolated, vec!["The", "-", "final", "-", "-", "countdown"]);
+        test(MergedWithPrevious, vec!["The-", "final-", "-", "countdown"]);
+        test(MergedWithNext, vec!["The", "-final", "-", "-countdown"]);
     }
 }

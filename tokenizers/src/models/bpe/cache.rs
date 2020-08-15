@@ -62,6 +62,7 @@ where
         self.map.write().unwrap().clear();
     }
 
+    #[allow(dead_code)]
     pub(super) fn get_values<'a, I, Q>(&self, keys_iter: I) -> Option<Vec<Option<V>>>
     where
         I: Iterator<Item = &'a Q>,
@@ -70,6 +71,18 @@ where
     {
         if let Ok(ref mut cache) = self.map.try_read() {
             Some(keys_iter.map(|k| cache.get(k).cloned()).collect())
+        } else {
+            None
+        }
+    }
+
+    pub(super) fn get<Q>(&self, key: &Q) -> Option<V>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        if let Ok(ref mut cache) = self.map.try_read() {
+            cache.get(key).cloned()
         } else {
             None
         }
@@ -97,5 +110,9 @@ where
             let free = self.capacity - cache.len();
             cache.extend(entries.into_iter().take(free));
         }
+    }
+
+    pub(super) fn set(&self, key: K, value: V) {
+        self.set_values(std::iter::once((key, value)))
     }
 }

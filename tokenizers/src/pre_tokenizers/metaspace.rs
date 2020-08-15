@@ -1,11 +1,14 @@
-use crate::tokenizer::{Decoder, NormalizedString, Offsets, PreTokenizer, Result};
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize)]
+use crate::tokenizer::{Decoder, PreTokenizedString, PreTokenizer, Result, SplitDelimiterBehavior};
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
 /// Replaces all the whitespaces by the provided meta character and then
 /// splits on this character
+#[serde(tag = "type")]
 pub struct Metaspace {
     replacement: char,
+    str_rep: String,
     add_prefix_space: bool,
 }
 
@@ -13,6 +16,7 @@ impl Metaspace {
     pub fn new(replacement: char, add_prefix_space: bool) -> Self {
         Self {
             replacement,
+            str_rep: replacement.to_string(),
             add_prefix_space,
         }
     }
@@ -24,38 +28,25 @@ impl Default for Metaspace {
     }
 }
 
-#[typetag::serde]
 impl PreTokenizer for Metaspace {
-    fn pre_tokenize(&self, normalized: &mut NormalizedString) -> Result<Vec<(String, Offsets)>> {
-        if self.add_prefix_space && !normalized.get().starts_with(' ') {
-            normalized.prepend(" ");
-        }
-
-        let mut words = vec![];
-        let mut word = Vec::with_capacity(1000);
-        let mut offset = 0;
-        normalized.get().chars().for_each(|c| {
-            if c.is_whitespace() {
-                if !word.is_empty() {
-                    let offsets = (offset - word.len(), offset);
-                    words.push((word.drain(0..).collect::<String>(), offsets));
-                }
-                word.push(self.replacement)
-            } else {
-                word.push(c);
+    fn pre_tokenize(&self, pretokenized: &mut PreTokenizedString) -> Result<()> {
+        pretokenized.split(|_, mut normalized| {
+            if self.add_prefix_space {
+                normalized.prepend(&self.str_rep);
             }
-            offset += 1;
-        });
-        if !word.is_empty() {
-            let offsets = (offset - word.len(), offset);
-            words.push((word.drain(0..).collect::<String>(), offsets));
-        }
 
-        Ok(words)
+            Ok(normalized
+                .split(' ', SplitDelimiterBehavior::MergedWithNext)?
+                .into_iter()
+                .map(|mut normalized| {
+                    normalized.replace(' ', &self.str_rep)?;
+                    Ok(normalized)
+                })
+                .collect::<Result<Vec<_>>>()?)
+        })
     }
 }
 
-#[typetag::serde]
 impl Decoder for Metaspace {
     fn decode(&self, tokens: Vec<String>) -> Result<String> {
         Ok(tokens
@@ -80,30 +71,44 @@ impl Decoder for Metaspace {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::OffsetReferential;
 
     #[test]
     fn basic() {
         let pretok = Metaspace::new('▁', true);
-        let mut input = NormalizedString::from("Hey friend!");
-        let res = pretok.pre_tokenize(&mut input).unwrap();
+        let mut pretokenized = PreTokenizedString::from("Hey friend!");
+        pretok.pre_tokenize(&mut pretokenized).unwrap();
         assert_eq!(
-            &res,
-            &[("▁Hey".into(), (0, 4)), ("▁friend!".into(), (4, 12)),]
+            pretokenized.get_normalized(OffsetReferential::Normalized),
+            vec![("▁Hey", (0, 4)), ("▁friend!", (4, 12))]
+        );
+        assert_eq!(
+            pretokenized.get_normalized(OffsetReferential::Original),
+            vec![("▁Hey", (0, 3)), ("▁friend!", (3, 11))]
         );
     }
 
     #[test]
     fn multiple_spaces() {
         let pretok = Metaspace::new('▁', true);
-        let mut input = NormalizedString::from("Hey   friend!");
-        let res = pretok.pre_tokenize(&mut input).unwrap();
+        let mut pretokenized = PreTokenizedString::from("Hey   friend!");
+        pretok.pre_tokenize(&mut pretokenized).unwrap();
         assert_eq!(
-            &res,
-            &[
-                ("▁Hey".into(), (0, 4)),
-                ("▁".into(), (4, 5)),
-                ("▁".into(), (5, 6)),
-                ("▁friend!".into(), (6, 14)),
+            pretokenized.get_normalized(OffsetReferential::Normalized),
+            vec![
+                ("▁Hey", (0, 4)),
+                ("▁", (4, 5)),
+                ("▁", (5, 6)),
+                ("▁friend!", (6, 14)),
+            ]
+        );
+        assert_eq!(
+            pretokenized.get_normalized(OffsetReferential::Original),
+            vec![
+                ("▁Hey", (0, 3)),
+                ("▁", (3, 4)),
+                ("▁", (4, 5)),
+                ("▁friend!", (5, 13)),
             ]
         );
     }

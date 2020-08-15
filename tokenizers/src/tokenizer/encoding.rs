@@ -47,21 +47,32 @@ impl Encoding {
         }
     }
 
+    pub fn with_capacity(len: usize) -> Self {
+        Encoding {
+            ids: Vec::with_capacity(len),
+            type_ids: Vec::with_capacity(len),
+            tokens: Vec::with_capacity(len),
+            words: Vec::with_capacity(len),
+            offsets: Vec::with_capacity(len),
+            special_tokens_mask: Vec::with_capacity(len),
+            attention_mask: Vec::with_capacity(len),
+            overflowing: vec![],
+        }
+    }
+
     pub fn from_tokens(tokens: Vec<Token>, type_id: u32) -> Self {
         let length = tokens.len();
-        let (ids, tokens, offsets, words) = tokens.into_iter().fold(
+        let (ids, tokens, offsets) = tokens.into_iter().fold(
             (
                 Vec::with_capacity(length),
                 Vec::with_capacity(length),
                 Vec::with_capacity(length),
-                Vec::with_capacity(length),
             ),
-            |(mut ids, mut tokens, mut offsets, mut words), t| {
+            |(mut ids, mut tokens, mut offsets), t| {
                 ids.push(t.id);
                 tokens.push(t.value);
                 offsets.push(t.offsets);
-                words.push(Some(t.word));
-                (ids, tokens, offsets, words)
+                (ids, tokens, offsets)
             },
         );
 
@@ -69,7 +80,7 @@ impl Encoding {
             ids,
             tokens,
             offsets,
-            words,
+            words: vec![None; length],
             type_ids: vec![type_id; length],
             attention_mask: vec![1; length],
             special_tokens_mask: vec![0; length],
@@ -276,19 +287,14 @@ impl Encoding {
     }
 
     /// Merge all Encodings together
-    pub fn merge(encodings: &[Encoding], growing_offsets: bool) -> Encoding {
-        if encodings.is_empty() {
-            return Encoding::default();
+    pub fn merge<I: IntoIterator<Item = Encoding>>(encodings: I, growing_offsets: bool) -> Self {
+        let mut encoding = Encoding::default();
+
+        for sub in encodings {
+            encoding.merge_with(sub, growing_offsets);
         }
 
-        let (firsts, others) = encodings.split_at(1);
-        let mut first: Encoding = firsts[0].clone();
-
-        for encoding in others {
-            first.merge_with(encoding.clone(), growing_offsets);
-        }
-
-        first
+        encoding
     }
 
     /// Merge ourself with the given `Encoding`. Happens in place.
@@ -322,20 +328,7 @@ impl Encoding {
         self.ids.extend(pair.ids);
         self.type_ids.extend(pair.type_ids);
         self.tokens.extend(pair.tokens);
-
-        let starting_word = self
-            .words
-            .iter()
-            .cloned()
-            .max()
-            .flatten()
-            .map_or(0, |w| w + 1);
-        self.words.extend(
-            pair.words
-                .into_iter()
-                .map(|w| w.map(|w| w + starting_word))
-                .collect::<Vec<_>>(),
-        );
+        self.words.extend(pair.words);
 
         let starting_offset = if growing_offsets {
             self.offsets.last().map_or(0, |o| o.1)
@@ -418,6 +411,33 @@ impl Encoding {
     }
 }
 
+impl std::iter::FromIterator<Encoding> for Encoding {
+    fn from_iter<I: IntoIterator<Item = Encoding>>(iter: I) -> Self {
+        Self::merge(iter, false)
+    }
+}
+
+impl std::iter::FromIterator<(u32, String, (usize, usize), Option<u32>, u32)> for Encoding {
+    fn from_iter<I: IntoIterator<Item = (u32, String, (usize, usize), Option<u32>, u32)>>(
+        iter: I,
+    ) -> Self {
+        let items = iter.into_iter();
+        let (lower, upper) = items.size_hint();
+        let length = upper.unwrap_or(lower);
+        let mut encoding = Self::with_capacity(length);
+
+        for (id, token, offsets, word, type_id) in items {
+            encoding.ids.push(id);
+            encoding.tokens.push(token);
+            encoding.offsets.push(offsets);
+            encoding.type_ids.push(type_id);
+            encoding.words.push(word);
+        }
+
+        encoding
+    }
+}
+
 #[inline]
 fn get_current_part<T: Clone>(
     prev: &[T],
@@ -469,7 +489,7 @@ mod tests {
                 ids: vec![1, 2],
                 type_ids: vec![0, 1],
                 tokens: vec![String::from("Hello "), String::from("World!")],
-                words: vec![Some(0), Some(1)],
+                words: vec![Some(0), Some(0)],
                 offsets: vec![(0, 6), (6, 12)],
                 special_tokens_mask: vec![0, 0],
                 attention_mask: vec![1, 1],

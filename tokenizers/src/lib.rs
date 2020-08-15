@@ -35,7 +35,7 @@
 //!         .unk_token("[UNK]".into())
 //!         .build()?;
 //!
-//!     let mut tokenizer = Tokenizer::new(Box::new(bpe));
+//!     let mut tokenizer = Tokenizer::new(bpe);
 //!
 //!     let encoding = tokenizer.encode("Hey there!", false)?;
 //!     println!("{:?}", encoding.get_tokens());
@@ -47,13 +47,14 @@
 #[macro_use]
 extern crate lazy_static;
 
+#[macro_use]
+pub mod utils;
 pub mod decoders;
 pub mod models;
 pub mod normalizers;
 pub mod pre_tokenizers;
 pub mod processors;
 pub mod tokenizer;
-pub mod utils;
 
 // Re-export from tokenizer
 pub use tokenizer::*;
