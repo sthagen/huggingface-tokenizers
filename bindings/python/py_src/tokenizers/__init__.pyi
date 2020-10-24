@@ -12,7 +12,8 @@ from .implementations import (
     BertWordPieceTokenizer as BertWordPieceTokenizer,
 )
 
-from typing import Optional, Union, List, Tuple
+from typing import Optional, Union, List, Tuple, Callable
+from enum import Enum
 
 Offsets = Tuple[int, int]
 
@@ -20,18 +21,245 @@ TextInputSequence = str
 PreTokenizedInputSequence = Union[List[str], Tuple[str]]
 TextEncodeInput = Union[TextInputSequence, Tuple[TextInputSequence, TextInputSequence]]
 PreTokenizedEncodeInput = Union[
-    PreTokenizedInputSequence, Tuple[PreTokenizedInputSequence, PreTokenizedInputSequence],
+    PreTokenizedInputSequence,
+    Tuple[PreTokenizedInputSequence, PreTokenizedInputSequence],
 ]
 
 InputSequence = Union[TextInputSequence, PreTokenizedInputSequence]
 EncodeInput = Union[TextEncodeInput, PreTokenizedEncodeInput]
+
+class OffsetReferential(Enum):
+    ORIGINAL = "original"
+    NORMALIZED = "normalized"
+
+class OffsetType(Enum):
+    BYTE = "byte"
+    CHAR = "char"
+
+class SplitDelimiterBehavior(Enum):
+    REMOVED = "removed"
+    ISOLATED = "isolated"
+    MERGED_WITH_PREVIOUS = "merged_with_previous"
+    MERGED_WITH_NEXT = "merged_with_next"
+    CONTIGUOUS = "contiguous"
+
+class Token:
+    id: int
+    token: str
+    offsets: Offsets
+
+Split = Tuple[str, Offsets, List[Token]]
+Range = Union[int, Tuple[int, int], slice]
+Pattern = Union[str, Regex]
+
+class PreTokenizedString:
+    """PreTokenizedString
+
+    Wrapper over a string, that provides a way to normalize, pre-tokenize, tokenize the
+    underlying string, while keeping track of the alignment information (offsets).
+
+    The PreTokenizedString manages what we call `splits`. Each split represents a substring
+    which is a subpart of the original string, with the relevant offsets and tokens.
+
+    When calling one of the methods used to modify the PreTokenizedString (namely one of
+    `split`, `normalize` or `tokenize), only the `splits` that don't have any associated
+    tokens will get modified.
+    """
+
+    def __new__(sequence: str) -> PreTokenizedString:
+        """Instantiate a new PreTokenizedString using the given str
+
+        Args:
+            sequence: str:
+                The string sequence used to initialize this PreTokenizedString
+        """
+        pass
+    def split(self, func: Callable[[index, NormalizedString], List[NormalizedString]]):
+        """Split the PreTokenizedString using the given `func`
+
+        Args:
+            func: Callable[[index, NormalizedString], List[NormalizedString]]:
+                The function used to split each underlying split.
+                It is expected to return a list of `NormalizedString`, that represent the new
+                splits. If the given `NormalizedString` does not need any splitting, we can
+                just return it directly.
+                In order for the offsets to be tracked accurately, any returned `NormalizedString`
+                should come from calling either `.split` or `.slice` on the received one.
+        """
+        pass
+    def normalize(self, func: Callable[[NormalizedString], None]):
+        """Normalize each split of the `PreTokenizedString` using the given `func`
+
+        Args:
+            func: Callable[[NormalizedString], None]:
+                The function used to normalize each underlying split. This function
+                does not need to return anything, just calling the methods on the provided
+                NormalizedString allow its modification.
+        """
+        pass
+    def tokenize(self, func: Callable[[str], List[Token]]):
+        """Tokenize each split of the `PreTokenizedString` using the given `func`
+
+        Args:
+            func: Callable[[str], List[Token]]:
+                The function used to tokenize each underlying split. This function must return
+                a list of Token generated from the input str.
+        """
+        pass
+    def to_encoding(self, type_id: int = 0, word_idx: Optional[int] = None) -> Encoding:
+        """Return an Encoding generated from this PreTokenizedString
+
+        Args:
+            type_id: int = 0:
+                The type_id to be used on the generated Encoding.
+
+            word_idx: Optional[int] = None:
+                An optional word index to be used for each token of this Encoding. If provided,
+                all the word indices in the generated Encoding will use this value, instead
+                of the one automatically tracked during pre-tokenization.
+
+        Returns:
+            An Encoding
+        """
+        pass
+    def get_splits(
+        self,
+        offset_referential: OffsetReferential = OffsetReferential.ORIGINAL,
+        offset_type: OffsetType = OffsetType.CHAR,
+    ) -> List[Split]:
+        """Get the splits currently managed by the PreTokenizedString
+
+        Args:
+            offset_referential: OffsetReferential:
+                Whether the returned splits should have offsets expressed relative
+                to the original string, or the normalized one.
+
+            offset_type: OffsetType:
+                Whether the returned splits should have offsets expressed in bytes or chars.
+                When slicing an str, we usually want to use chars, which is the default value.
+                Now in some cases it might be interesting to get these offsets expressed in bytes,
+                so it is possible to change this here.
+
+        Returns
+            A list of splits
+        """
+        pass
+
+class NormalizedString:
+    """NormalizedString
+
+    A NormalizedString takes care of modifying an "original" string, to obtain a "normalized" one.
+    While making all the requested modifications, it keeps track of the alignment information
+    between the two versions of the string.
+    """
+
+    def __new__(sequence: str) -> NormalizedString:
+        """Instantiate a new NormalizedString using the given str
+
+        Args:
+            sequence: str:
+                The string sequence used to initialize this NormalizedString
+        """
+        pass
+    @property
+    def normalized(self) -> str:
+        """ The normalized part of the string """
+        pass
+    @property
+    def original(self) -> str:
+        """ The original part of the string """
+        pass
+    def nfd(self):
+        """ Runs the NFD normalization """
+        pass
+    def nfkd(self):
+        """ Runs the NFKD normalization """
+        pass
+    def nfc(self):
+        """ Runs the NFC normalization """
+        pass
+    def nfkc(self):
+        """ Runs the NFKC normalization """
+        pass
+    def lowercase(self):
+        """ Lowercase the string """
+        pass
+    def uppercase(self):
+        """ Uppercase the string """
+        pass
+    def prepend(self, s: str):
+        """ Prepend the given sequence to the string """
+        pass
+    def append(self, s: str):
+        """ Append the given sequence to the string """
+        pass
+    def lstrip(self):
+        """ Strip the left of the string """
+        pass
+    def rstrip(self):
+        """ Strip the right of the string """
+        pass
+    def strip(self):
+        """ Strip both ends of the string """
+        pass
+    def clear(self):
+        """ Clear the string """
+        pass
+    def slice(self, range: Range) -> Optional[NormalizedString]:
+        """ Slice the string using the given range """
+        pass
+    def filter(self, func: Callable[[str], bool]):
+        """ Filter each character of the string using the given func """
+        pass
+    def for_each(self, func: Callable[[str], None]):
+        """ Calls the given function for each character of the string """
+        pass
+    def map(self, func: Callable[[str], str]):
+        """Calls the given function for each character of the string
+
+        Replaces each character of the string using the returned value. Each
+        returned value **must** be a str of length 1 (ie a character).
+        """
+        pass
+    def split(self, pattern: Pattern, behavior: SplitDelimiterBehavior) -> List[NormalizedString]:
+        """Split the NormalizedString using the given pattern and the specified behavior
+
+        Args:
+            pattern: Pattern:
+                A pattern used to split the string. Usually a string or a Regex
+
+            behavior: SplitDelimiterBehavior:
+                The behavior to use when splitting
+
+        Returns:
+            A list of NormalizedString, representing each split
+        """
+        pass
+    def replace(self, pattern: Pattern, content: str):
+        """Replace the content of the given pattern with the provided content
+
+        Args:
+            pattern: Pattern:
+                A pattern used to match the string. Usually a string or a Regex
+
+            content: str:
+                The content to be used as replacement
+        """
+        pass
+
+class Regex:
+    """ A Regex """
+
+    def __new__(pattern: str) -> Regex:
+        """ Instantiate a new Regex with the given pattern """
+        pass
 
 class Encoding:
     """ An Encoding as returned by the Tokenizer """
 
     @staticmethod
     def merge(encodings: List[Encoding], growing_offsets: bool = True) -> Encoding:
-        """ Merge the list of Encoding into one final Encoding
+        """Merge the list of Encoding into one final Encoding
 
         Args:
             encodings: List[Encoding]:
@@ -62,7 +290,7 @@ class Encoding:
         pass
     @property
     def offsets(self) -> List[Offsets]:
-        """ The offsets.
+        """The offsets.
         These offsets can be used to index any `IndexableString` directly. If you want to
         index the original `str`, make sure to retrieve the converted offsets using the `.offsets`
         method on the `original_str`.
@@ -161,7 +389,7 @@ class Encoding:
         pad_token: Optional[str] = "[PAD]",
         direction: Optional[str] = "right",
     ):
-        """ Pad the current Encoding at the given length
+        """Pad the current Encoding at the given length
 
         Args:
             length: int:
@@ -181,7 +409,7 @@ class Encoding:
         """
         pass
     def truncate(self, max_length: int, stride: Optional[int] = 0):
-        """ Truncate the current Encoding at the given max_length
+        """Truncate the current Encoding at the given max_length
 
         Args:
             max_length: int:
@@ -194,7 +422,7 @@ class Encoding:
         pass
 
 class AddedToken:
-    """ AddedToken represents a token to be added to a Tokenizer
+    """AddedToken represents a token to be added to a Tokenizer
 
     An AddedToken can have special options defining the way it should behave.
     """
@@ -207,7 +435,7 @@ class AddedToken:
         rstrip: bool = False,
         normalized: bool = True,
     ) -> AddedToken:
-        """ Instantiate a new AddedToken
+        """Instantiate a new AddedToken
 
         Args:
             content: str:
@@ -237,7 +465,7 @@ class AddedToken:
         pass
 
 class Tokenizer:
-    """ Tokenizer
+    """Tokenizer
 
     A Tokenizer works as a pipeline, it processes some raw text as input and outputs
     an `Encoding`.
@@ -254,7 +482,7 @@ class Tokenizer:
     """
 
     def __new__(cls, model: models.Model) -> Tokenizer:
-        """ Instantiate a new Tokenizer using the given Model
+        """Instantiate a new Tokenizer using the given Model
 
         Args:
             model: models.Model:
@@ -266,7 +494,7 @@ class Tokenizer:
         pass
     @staticmethod
     def from_str(s: str) -> Tokenizer:
-        """ Instantiate a new Tokenizer from the given JSON string
+        """Instantiate a new Tokenizer from the given JSON string
 
         Args:
             s: str:
@@ -278,7 +506,7 @@ class Tokenizer:
         pass
     @staticmethod
     def from_file(path: str) -> Tokenizer:
-        """ Instantiate a new Tokenizer from the given file
+        """Instantiate a new Tokenizer from the given file
 
         Args:
             path: str:
@@ -290,7 +518,7 @@ class Tokenizer:
         pass
     @staticmethod
     def from_buffer(buffer: bytes) -> Tokenizer:
-        """ Instantiate a new Tokenizer from the given buffer
+        """Instantiate a new Tokenizer from the given buffer
 
         Args:
             buffer: bytes:
@@ -301,7 +529,7 @@ class Tokenizer:
         """
         pass
     def to_str(self, pretty: bool = False) -> str:
-        """ Get a serialized JSON version of the Tokenizer as a str
+        """Get a serialized JSON version of the Tokenizer as a str
 
         Args:
             pretty: bool:
@@ -312,7 +540,7 @@ class Tokenizer:
         """
         pass
     def save(self, path: str, pretty: bool = False):
-        """ Save the Tokenizer as JSON to the given path
+        """Save the Tokenizer as JSON to the given path
 
         Args:
             pretty: bool:
@@ -365,7 +593,7 @@ class Tokenizer:
         """
         pass
     def get_vocab(self, with_added_tokens: bool = True) -> Dict[str, int]:
-        """ Returns the vocabulary
+        """Returns the vocabulary
 
         Args:
             with_added_tokens: boolean:
@@ -376,7 +604,7 @@ class Tokenizer:
         """
         pass
     def get_vocab_size(self, with_added_tokens: bool = True) -> int:
-        """ Returns the size of the vocabulary
+        """Returns the size of the vocabulary
 
         Args:
             with_added_tokens: boolean:
@@ -387,7 +615,7 @@ class Tokenizer:
         """
         pass
     def enable_truncation(self, max_length: int, stride: Optional[int], strategy: Optional[str]):
-        """ Enable the truncation
+        """Enable the truncation
 
         Args:
             max_length: unsigned int:
@@ -406,7 +634,7 @@ class Tokenizer:
         pass
     @property
     def truncation(self) -> Optional[dict]:
-        """ Get the current truncation parameters
+        """Get the current truncation parameters
 
         Returns:
             None if truncation is disabled, a dict with the current truncation parameters if
@@ -422,7 +650,7 @@ class Tokenizer:
         pad_token: Optional[str] = "[PAD]",
         length: Optional[int] = None,
     ):
-        """ Enable the padding
+        """Enable the padding
 
         Args:
             direction: (`optional`) str:
@@ -452,22 +680,11 @@ class Tokenizer:
         pass
     @property
     def padding(self) -> Optional[dict]:
-        """ Get the current padding parameters
+        """Get the current padding parameters
 
         Returns:
             None if padding is disabled, a dict with the currently set parameters
             if the padding is enabled.
-        """
-        pass
-    def normalize(self, sequence: str) -> str:
-        """ Normalize the given sequence
-
-        Args:
-            sequence: str:
-                The sequence to normalize
-
-        Returns:
-            The normalized string
         """
         pass
     def encode(
@@ -477,7 +694,7 @@ class Tokenizer:
         is_pretokenized: bool = False,
         add_special_tokens: bool = True,
     ) -> Encoding:
-        """ Encode the given sequence and pair. This method can process raw text sequences as well
+        """Encode the given sequence and pair. This method can process raw text sequences as well
         as already pre-tokenized sequences.
 
         Args:
@@ -505,7 +722,7 @@ class Tokenizer:
         is_pretokenized: bool = False,
         add_special_tokens: bool = True,
     ) -> List[Encoding]:
-        """ Encode the given inputs. This method accept both raw text sequences as well as already
+        """Encode the given inputs. This method accept both raw text sequences as well as already
         pre-tokenized sequences.
 
         Args:
@@ -532,7 +749,7 @@ class Tokenizer:
         """
         pass
     def decode(self, ids: List[int], skip_special_tokens: Optional[bool] = True) -> str:
-        """ Decode the given list of ids to a string sequence
+        """Decode the given list of ids to a string sequence
 
         Args:
             ids: List[unsigned int]:
@@ -548,7 +765,7 @@ class Tokenizer:
     def decode_batch(
         self, sequences: List[List[int]], skip_special_tokens: Optional[bool] = True
     ) -> str:
-        """ Decode the list of sequences to a list of string sequences
+        """Decode the list of sequences to a list of string sequences
 
         Args:
             sequences: List[List[unsigned int]]:
@@ -562,7 +779,7 @@ class Tokenizer:
         """
         pass
     def token_to_id(self, token: str) -> Optional[int]:
-        """ Convert the given token to its corresponding id
+        """Convert the given token to its corresponding id
 
         Args:
             token: str:
@@ -573,7 +790,7 @@ class Tokenizer:
         """
         pass
     def id_to_token(self, id: int) -> Optional[str]:
-        """ Convert the given token id to its corresponding string
+        """Convert the given token id to its corresponding string
 
         Args:
             token: id:
@@ -584,7 +801,7 @@ class Tokenizer:
         """
         pass
     def add_tokens(self, tokens: List[Union[str, AddedToken]]) -> int:
-        """ Add the given tokens to the vocabulary
+        """Add the given tokens to the vocabulary
 
         Args:
             tokens: List[Union[str, AddedToken]]:
@@ -596,7 +813,7 @@ class Tokenizer:
         """
         pass
     def add_special_tokens(self, tokens: List[Union[str, AddedToken]]) -> int:
-        """ Add the given special tokens to the vocabulary, and treat them as special tokens.
+        """Add the given special tokens to the vocabulary, and treat them as special tokens.
 
         The special tokens will never be processed by the model, and will be
         removed while decoding.
@@ -611,9 +828,12 @@ class Tokenizer:
         """
         pass
     def post_process(
-        self, encoding: Encoding, pair: Optional[Encoding] = None, add_special_tokens: bool = True,
+        self,
+        encoding: Encoding,
+        pair: Optional[Encoding] = None,
+        add_special_tokens: bool = True,
     ) -> Encoding:
-        """ Apply all the post-processing steps to the given encodings.
+        """Apply all the post-processing steps to the given encodings.
 
         The various steps are:
             1. Truncate according to global params (provided to `enable_truncation`)

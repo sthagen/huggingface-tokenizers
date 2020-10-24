@@ -12,7 +12,7 @@
 use std::{
     collections::HashMap,
     fmt,
-    fs::File,
+    fs::{read_to_string, File},
     io::prelude::*,
     io::BufReader,
     ops::{Deref, DerefMut},
@@ -29,7 +29,6 @@ use crate::models::ModelWrapper;
 use crate::normalizers::NormalizerWrapper;
 use crate::pre_tokenizers::PreTokenizerWrapper;
 use crate::processors::PostProcessorWrapper;
-use crate::tokenizer::normalizer::Range;
 use crate::utils::parallelism::*;
 
 mod added_vocabulary;
@@ -49,7 +48,6 @@ pub use pre_tokenizer::*;
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 pub type Result<T> = std::result::Result<T, Error>;
-pub type ByteOffsets = (usize, usize);
 pub type Offsets = (usize, usize);
 
 /// Takes care of pre-processing strings.
@@ -134,7 +132,7 @@ pub trait Trainer {
     fn process_tokens(&self, words: &mut HashMap<String, u32>, tokens: Vec<String>);
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Token {
     pub id: u32,
     pub value: String,
@@ -146,55 +144,86 @@ impl Token {
     }
 }
 
+use std::borrow::Cow;
 #[derive(Debug, Clone)]
-pub enum InputSequence {
-    Raw(String),
-    PreTokenized(Vec<String>),
+pub enum InputSequence<'s> {
+    Raw(Cow<'s, str>),
+    PreTokenized(Cow<'s, [&'s str]>),
+    PreTokenizedOwned(Cow<'s, [String]>),
+    PreTokenizedCow(Cow<'s, [Cow<'s, str>]>),
 }
 
-impl From<String> for InputSequence {
-    fn from(input: String) -> Self {
+impl<'s> From<Cow<'s, str>> for InputSequence<'s> {
+    fn from(input: Cow<'s, str>) -> Self {
         InputSequence::Raw(input)
     }
 }
 
-impl From<&str> for InputSequence {
-    fn from(input: &str) -> Self {
-        InputSequence::Raw(input.to_owned())
+impl<'s> From<&'s str> for InputSequence<'s> {
+    fn from(input: &'s str) -> Self {
+        InputSequence::Raw(Cow::Borrowed(input))
     }
 }
 
-impl From<Vec<String>> for InputSequence {
+impl From<String> for InputSequence<'_> {
+    fn from(input: String) -> Self {
+        InputSequence::Raw(Cow::Owned(input))
+    }
+}
+
+impl<'s> From<&'s [&'s str]> for InputSequence<'s> {
+    fn from(input: &'s [&'s str]) -> Self {
+        InputSequence::PreTokenized(Cow::Borrowed(input))
+    }
+}
+
+impl<'s> From<Vec<&'s str>> for InputSequence<'s> {
+    fn from(input: Vec<&'s str>) -> Self {
+        InputSequence::PreTokenized(Cow::Owned(input))
+    }
+}
+
+impl<'s> From<&'s [String]> for InputSequence<'s> {
+    fn from(input: &'s [String]) -> Self {
+        InputSequence::PreTokenizedOwned(Cow::Borrowed(input))
+    }
+}
+
+impl<'s> From<Vec<String>> for InputSequence<'s> {
     fn from(input: Vec<String>) -> Self {
-        InputSequence::PreTokenized(input)
+        InputSequence::PreTokenizedOwned(Cow::Owned(input))
     }
 }
 
-impl From<&[String]> for InputSequence {
-    fn from(input: &[String]) -> Self {
-        InputSequence::PreTokenized(input.to_vec())
+impl<'s> From<Vec<Cow<'s, str>>> for InputSequence<'s> {
+    fn from(input: Vec<Cow<'s, str>>) -> Self {
+        InputSequence::PreTokenizedCow(Cow::Owned(input))
     }
 }
 
-impl From<&[&str]> for InputSequence {
-    fn from(input: &[&str]) -> Self {
-        InputSequence::PreTokenized(input.iter().map(|&i| i.to_string()).collect())
+impl<'s> From<&'s [Cow<'s, str>]> for InputSequence<'s> {
+    fn from(input: &'s [Cow<'s, str>]) -> Self {
+        InputSequence::PreTokenizedCow(Cow::Borrowed(input))
     }
 }
 
 #[derive(Debug, Clone)]
-pub enum EncodeInput {
-    Single(InputSequence),
-    Dual(InputSequence, InputSequence),
+pub enum EncodeInput<'s> {
+    Single(InputSequence<'s>),
+    Dual(InputSequence<'s>, InputSequence<'s>),
 }
 
-impl<I: Into<InputSequence>> From<I> for EncodeInput {
+impl<'s, I: Into<InputSequence<'s>>> From<I> for EncodeInput<'s> {
     fn from(input: I) -> Self {
         EncodeInput::Single(input.into())
     }
 }
 
-impl<I1: Into<InputSequence>, I2: Into<InputSequence>> From<(I1, I2)> for EncodeInput {
+impl<'s, I1, I2> From<(I1, I2)> for EncodeInput<'s>
+where
+    I1: Into<InputSequence<'s>>,
+    I2: Into<InputSequence<'s>>,
+{
     fn from(input: (I1, I2)) -> Self {
         EncodeInput::Dual(input.0.into(), input.1.into())
     }
@@ -294,14 +323,14 @@ where
         self
     }
 
-    /// Set the pretokenizer.
-    pub fn with_pretokenizer(mut self, pretokenizer: Option<PT>) -> Self {
+    /// Set the pre-tokenizer.
+    pub fn with_pre_tokenizer(mut self, pretokenizer: Option<PT>) -> Self {
         self.pre_tokenizer = pretokenizer;
         self
     }
 
-    /// Set the postprocessor.
-    pub fn with_postprocessor(mut self, post_processor: Option<PP>) -> Self {
+    /// Set the post-processor.
+    pub fn with_post_processor(mut self, post_processor: Option<PP>) -> Self {
         self.post_processor = post_processor;
         self
     }
@@ -353,6 +382,10 @@ impl Tokenizer {
         DecoderWrapper,
     > {
         self.0
+    }
+    pub fn from_file<P: AsRef<Path>>(file: P) -> Result<Self> {
+        let content = read_to_string(file)?;
+        Ok(serde_json::from_str(&content)?)
     }
 }
 
@@ -441,7 +474,7 @@ where
     }
 
     /// Set the normalizer
-    pub fn with_normalizer(&mut self, normalizer: impl Into<N>) -> &Self {
+    pub fn with_normalizer(&mut self, normalizer: impl Into<N>) -> &mut Self {
         self.normalizer = Some(normalizer.into());
         self
     }
@@ -452,7 +485,7 @@ where
     }
 
     /// Set the pre tokenizer
-    pub fn with_pre_tokenizer(&mut self, pre_tokenizer: impl Into<PT>) -> &Self {
+    pub fn with_pre_tokenizer(&mut self, pre_tokenizer: impl Into<PT>) -> &mut Self {
         self.pre_tokenizer = Some(pre_tokenizer.into());
         self
     }
@@ -463,7 +496,7 @@ where
     }
 
     /// Set the post processor
-    pub fn with_post_processor(&mut self, post_processor: impl Into<PP>) -> &Self {
+    pub fn with_post_processor(&mut self, post_processor: impl Into<PP>) -> &mut Self {
         self.post_processor = Some(post_processor.into());
         self
     }
@@ -474,7 +507,7 @@ where
     }
 
     /// Set the decoder
-    pub fn with_decoder(&mut self, decoder: impl Into<D>) -> &Self {
+    pub fn with_decoder(&mut self, decoder: impl Into<D>) -> &mut Self {
         self.decoder = Some(decoder.into());
         self
     }
@@ -496,7 +529,7 @@ where
     }
 
     /// Set the truncation parameters
-    pub fn with_truncation(&mut self, trunc: Option<TruncationParams>) -> &Self {
+    pub fn with_truncation(&mut self, trunc: Option<TruncationParams>) -> &mut Self {
         self.truncation = trunc;
         self
     }
@@ -512,7 +545,7 @@ where
     }
 
     /// Set the padding parameters
-    pub fn with_padding(&mut self, padding: Option<PaddingParams>) -> &Self {
+    pub fn with_padding(&mut self, padding: Option<PaddingParams>) -> &mut Self {
         self.padding = padding;
         self
     }
@@ -564,91 +597,50 @@ where
         self.added_vocabulary.id_to_token(id, &self.model)
     }
 
-    /// Normalize the given sentence and return the corresponding normalized string
-    pub fn normalize(&self, sentence: &str) -> Result<NormalizedString> {
-        self.added_vocabulary
-            .extract_and_normalize(self.normalizer.as_ref(), sentence)
-            .flat_map(|(sentence, _, id)| {
-                if id.is_some() {
-                    itertools::Either::Left(std::iter::once(Ok(sentence)))
-                } else {
-                    // The PreTokenizers can still manipulate the normalized strings, so we do
-                    // this anyway, and will merge it back to a NormalizedString
-                    match self.do_pre_tokenize(sentence) {
-                        Ok(pretok) => itertools::Either::Right(
-                            pretok.into_iter().map(|substring| Ok(substring.normalized)),
-                        ),
-                        Err(e) => itertools::Either::Left(std::iter::once(Err(e))),
-                    }
-                }
-            })
-            .collect::<Result<NormalizedString>>()
-    }
-
     /// Encode a single sequence
-    fn encode_single_sequence(&self, sequence: InputSequence, type_id: u32) -> Result<Encoding> {
-        let (sequence, pre_tokenized) = match sequence {
-            InputSequence::PreTokenized(seq) => (seq, true),
-            InputSequence::Raw(seq) => (vec![seq], false),
+    fn encode_single_sequence(
+        &self,
+        sequence: InputSequence,
+        type_id: u32,
+        offsets_type: OffsetType,
+    ) -> Result<Encoding> {
+        let encode = |is_pre_tokenized, subseq_idx, subseq| -> Result<Encoding> {
+            let normalized = self
+                .added_vocabulary
+                .extract_and_normalize(self.normalizer.as_ref(), subseq);
+            let pre_tokenized = self.do_pre_tokenize(normalized)?;
+            let subseq_encoding = self.do_tokenize(
+                pre_tokenized,
+                type_id,
+                if is_pre_tokenized {
+                    Some(subseq_idx as u32)
+                } else {
+                    None
+                },
+                offsets_type,
+            )?;
+
+            Ok(subseq_encoding)
         };
 
-        sequence
-            .into_iter()
-            .enumerate()
-            .map(|(subseq_idx, subseq)| {
-                let encodings = self
-                    .added_vocabulary
-                    .extract_and_normalize(self.normalizer.as_ref(), &subseq)
-                    .map(|(normalized, original_offsets, id)| match id {
-                        // This is an added token, no need to tokenize, we have the ID
-                        Some(id) => {
-                            let mut encoding = Encoding::from_tokens(
-                                vec![Token::new(
-                                    id,
-                                    normalized.get().to_owned(),
-                                    original_offsets,
-                                )],
-                                type_id,
-                            );
-                            encoding.get_words_mut()[0] = Some(0);
-                            Ok(encoding)
-                        }
-                        // Let's tokenize
-                        None => self.do_tokenize(
-                            self.do_pre_tokenize(normalized)?,
-                            original_offsets,
-                            type_id,
-                        ),
-                    })
-                    .collect::<Result<Vec<Encoding>>>()?;
-
-                // At this point, the `words` are good for each sub encoding independently,
-                // but we need to make them grow sequentially.
-                let mut subseq_encoding: Encoding =
-                    encodings
-                        .into_iter()
-                        .fold(Encoding::default(), |mut encoding, mut other| {
-                            let last_word_id = encoding.get_words().last().map(|w| w.unwrap());
-                            other.get_words_mut().iter_mut().for_each(|w| {
-                                *w.as_mut().unwrap() += last_word_id.map(|w| w + 1).unwrap_or(0);
-                            });
-                            encoding.merge_with(other, false);
-                            encoding
-                        });
-
-                // If we are handling already pre-tokenized input, each word should have the
-                // relevant index from the given input, not determined by the pre-tokenization step
-                if pre_tokenized {
-                    subseq_encoding.get_words_mut().iter_mut().for_each(|word| {
-                        if let Some(ref mut word) = word {
-                            *word = subseq_idx as u32;
-                        }
-                    });
-                }
-
-                Ok(subseq_encoding)
-            })
-            .collect::<Result<Encoding>>()
+        match sequence {
+            InputSequence::PreTokenized(seq) => seq
+                .iter()
+                .enumerate()
+                .map(|(i, sequence)| encode(true, i, sequence))
+                .collect(),
+            InputSequence::PreTokenizedOwned(seq) => seq
+                .iter()
+                .enumerate()
+                .map(|(i, sequence)| encode(true, i, sequence))
+                .collect(),
+            InputSequence::PreTokenizedCow(seq) => seq
+                .iter()
+                .enumerate()
+                .map(|(i, sequence)| encode(true, i, sequence))
+                .collect(),
+            InputSequence::Raw(seq) => encode(false, 0, seq.as_ref()),
+        }
     }
 
     /// Encode the given input. This method accepts both single sequences, as well as pair
@@ -673,11 +665,10 @@ where
     /// // or even both types together:
     /// tokenizer.encode(("A complete sequence", &["And", "a", "tokenized"][..]), false);
     /// ```
-    pub fn encode<E: Into<EncodeInput>>(
-        &self,
-        input: E,
-        add_special_tokens: bool,
-    ) -> Result<Encoding> {
+    pub fn encode<'s, E>(&self, input: E, add_special_tokens: bool) -> Result<Encoding>
+    where
+        E: Into<EncodeInput<'s>>,
+    {
         // Extract sequences from the EncodeInput
         let (sequence, pair) = match input.into() {
             EncodeInput::Single(s1) => (s1, None),
@@ -685,9 +676,53 @@ where
         };
 
         // Encode each sequence
-        let encoding = self.encode_single_sequence(sequence, 0)?;
+        let encoding = self.encode_single_sequence(sequence, 0, OffsetType::Byte)?;
         let pair_encoding = match pair {
-            Some(sequence) => Some(self.encode_single_sequence(sequence, 1)?),
+            Some(sequence) => Some(self.encode_single_sequence(sequence, 1, OffsetType::Byte)?),
+            None => None,
+        };
+
+        // And finally post process
+        self.post_process(encoding, pair_encoding, add_special_tokens)
+    }
+
+    /// Encode the given input, using offsets relative to chars instead of bytes.
+    /// This method accepts both single sequences, as well as pair sequences. Also,
+    /// a sequence can be a string, or already pre-tokenized input directly:
+    ///
+    /// ```
+    /// # use tokenizers::Tokenizer;
+    /// # use tokenizers::models::bpe::BPE;
+    /// # let mut tokenizer = Tokenizer::new(BPE::default());
+    /// #
+    /// // Sequences:
+    /// tokenizer.encode("Single sequence", false);
+    /// tokenizer.encode(("Sequence A", "Sequence B"), false);
+    ///
+    /// // Pre-tokenized sequences:
+    /// tokenizer.encode(&["Single", "sequence"][..], false);
+    /// tokenizer.encode((
+    ///     &["Sequence", "A"][..],
+    ///     &["Sequence", "B"][..]
+    /// ), false);
+    ///
+    /// // or even both types together:
+    /// tokenizer.encode(("A complete sequence", &["And", "a", "tokenized"][..]), false);
+    /// ```
+    pub fn encode_char_offsets<'s, E>(&self, input: E, add_special_tokens: bool) -> Result<Encoding>
+    where
+        E: Into<EncodeInput<'s>>,
+    {
+        // Extract sequences from the EncodeInput
+        let (sequence, pair) = match input.into() {
+            EncodeInput::Single(s1) => (s1, None),
+            EncodeInput::Dual(s1, s2) => (s1, Some(s2)),
+        };
+
+        // Encode each sequence
+        let encoding = self.encode_single_sequence(sequence, 0, OffsetType::Char)?;
+        let pair_encoding = match pair {
+            Some(sequence) => Some(self.encode_single_sequence(sequence, 1, OffsetType::Char)?),
             None => None,
         };
 
@@ -726,47 +761,13 @@ where
     fn do_tokenize<P: Into<PreTokenizedString>>(
         &self,
         pretokenized: P,
-        original_offsets: Offsets,
         type_id: u32,
+        word_idx: Option<u32>,
+        offsets_type: OffsetType,
     ) -> Result<Encoding> {
-        let pretokenized: PreTokenizedString = pretokenized.into();
-
-        pretokenized
-            .into_iter()
-            .filter(|substr| !substr.normalized.is_empty())
-            .enumerate()
-            .flat_map(|(word_idx, substr)| {
-                match self.model.tokenize(substr.normalized.get()) {
-                    Ok(tokens) => {
-                        itertools::Either::Left(tokens.into_iter().map(move |token| {
-                            // We convert the normalized offsets back to the original
-                            let converted_offsets = substr
-                                .normalized
-                                .convert_offsets(Range::Normalized(
-                                    token.offsets.0..token.offsets.1,
-                                ))
-                                .map_or(token.offsets, |range| {
-                                    (
-                                        original_offsets.0
-                                            + substr.original_offsets.0
-                                            + range.start,
-                                        original_offsets.0 + substr.original_offsets.0 + range.end,
-                                    )
-                                });
-
-                            Ok((
-                                token.id,
-                                token.value,
-                                converted_offsets,
-                                Some(word_idx as u32),
-                                type_id,
-                            ))
-                        }))
-                    }
-                    Err(e) => itertools::Either::Right(std::iter::once(Err(e))),
-                }
-            })
-            .collect()
+        let mut pretokenized: PreTokenizedString = pretokenized.into();
+        pretokenized.tokenize(|normalized| self.model.tokenize(normalized.get()))?;
+        pretokenized.into_encoding(word_idx, type_id, offsets_type)
     }
 }
 
@@ -887,14 +888,40 @@ where
     D: Decoder + Send + Sync,
 {
     /// Encode all the sentences in parallel, using multiple threads
-    pub fn encode_batch<E: Into<EncodeInput> + Send>(
+    pub fn encode_batch<'s, E>(
         &self,
         inputs: Vec<E>,
         add_special_tokens: bool,
-    ) -> Result<Vec<Encoding>> {
+    ) -> Result<Vec<Encoding>>
+    where
+        E: Into<EncodeInput<'s>> + Send,
+    {
         let mut encodings = inputs
             .into_maybe_par_iter()
             .map(|input| self.encode(input, add_special_tokens))
+            .collect::<Result<Vec<Encoding>>>()?;
+
+        if let Some(params) = &self.padding {
+            // We do the padding here to make sure we handle the batch padding
+            pad_encodings(&mut encodings, &params)?;
+        }
+
+        Ok(encodings)
+    }
+
+    /// Encode all the sentences in parallel, using multiple threads.
+    /// The offsets on each `Encoding` will be relative to chars instead of bytes.
+    pub fn encode_batch_char_offsets<'s, E>(
+        &self,
+        inputs: Vec<E>,
+        add_special_tokens: bool,
+    ) -> Result<Vec<Encoding>>
+    where
+        E: Into<EncodeInput<'s>> + Send,
+    {
+        let mut encodings = inputs
+            .into_maybe_par_iter()
+            .map(|input| self.encode_char_offsets(input, add_special_tokens))
             .collect::<Result<Vec<Encoding>>>()?;
 
         if let Some(params) = &self.padding {
@@ -967,8 +994,9 @@ where
                             trainer.process_tokens(
                                 &mut words,
                                 pre_tokenized
+                                    .get_splits(OffsetReferential::Original, OffsetType::Byte)
                                     .into_iter()
-                                    .map(|sub| sub.normalized.get().to_owned())
+                                    .map(|(s, _, _)| s.to_owned())
                                     .collect(),
                             );
 
@@ -1073,9 +1101,8 @@ where
 {
     /// Instantiate a new Tokenizer from the given file
     pub fn from_file<P: AsRef<Path>>(file: P) -> Result<Self> {
-        let file = File::open(file)?;
-        let buf = BufReader::new(file);
-        Ok(serde_json::from_reader(buf)?)
+        let content = read_to_string(file)?;
+        Ok(serde_json::from_str(&content)?)
     }
 }
 
@@ -1097,7 +1124,7 @@ where
     }
 
     /// Save the current tokenizer at the given path
-    pub fn save(&self, path: &str, pretty: bool) -> Result<()> {
+    pub fn save<P: AsRef<Path>>(&self, path: P, pretty: bool) -> Result<()> {
         let serialized = self.to_string(pretty)?;
 
         let mut file = File::create(path)?;

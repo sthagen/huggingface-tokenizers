@@ -144,6 +144,17 @@ impl Encoding {
         std::mem::replace(&mut self.overflowing, vec![])
     }
 
+    pub(crate) fn process_tokens_with_offsets_mut<F>(&mut self, func: F)
+    where
+        F: FnMut((usize, (&String, &mut Offsets))),
+    {
+        self.tokens
+            .iter()
+            .zip(self.offsets.iter_mut())
+            .enumerate()
+            .for_each(func)
+    }
+
     /// Get the encoded tokens corresponding to the word at the given index in the input sequence,
     /// with the form (start_token, end_token + 1)
     pub fn word_to_tokens(&self, word: u32) -> Option<(usize, usize)> {
@@ -208,13 +219,17 @@ impl Encoding {
 
     /// Truncate the current `Encoding`.
     ///
-    /// Panic if `stride >= max_len` or `max_len == 0`.
+    /// Panic if `stride >= max_len`
     pub fn truncate(&mut self, max_len: usize, stride: usize) {
         if max_len >= self.ids.len() {
             return;
         }
-        // We only truncate if max_len > 0, it makes no sense otherwise
-        assert!(max_len > 0);
+
+        if max_len == 0 {
+            let o = std::mem::replace(self, Encoding::with_capacity(0));
+            self.overflowing.push(o);
+            return;
+        }
 
         // Get the main overflowing part
         let o_ids = self.ids.split_off(max_len);
@@ -432,6 +447,8 @@ impl std::iter::FromIterator<(u32, String, (usize, usize), Option<u32>, u32)> fo
             encoding.offsets.push(offsets);
             encoding.type_ids.push(type_id);
             encoding.words.push(word);
+            encoding.special_tokens_mask.push(0);
+            encoding.attention_mask.push(1);
         }
 
         encoding
@@ -534,6 +551,52 @@ mod tests {
                     offsets: vec![(11, 12)],
                     special_tokens_mask: vec![0],
                     attention_mask: vec![1],
+                    overflowing: vec![],
+                }]
+            }
+        );
+    }
+
+    #[test]
+    fn truncate_to_empty() {
+        let mut a = Encoding {
+            ids: vec![1, 2, 3],
+            type_ids: vec![0, 0, 0],
+            tokens: vec![
+                String::from("Hello"),
+                String::from("World"),
+                String::from("!"),
+            ],
+            words: vec![Some(0), Some(1), Some(2)],
+            offsets: vec![(0, 5), (6, 11), (11, 12)],
+            special_tokens_mask: vec![0, 0, 0],
+            attention_mask: vec![1, 1, 1],
+            overflowing: vec![],
+        };
+        a.truncate(0, 0);
+
+        assert_eq!(
+            a,
+            Encoding {
+                ids: vec![],
+                type_ids: vec![],
+                tokens: vec![],
+                words: vec![],
+                offsets: vec![],
+                special_tokens_mask: vec![],
+                attention_mask: vec![],
+                overflowing: vec![Encoding {
+                    ids: vec![1, 2, 3],
+                    type_ids: vec![0, 0, 0],
+                    tokens: vec![
+                        String::from("Hello"),
+                        String::from("World"),
+                        String::from("!"),
+                    ],
+                    words: vec![Some(0), Some(1), Some(2)],
+                    offsets: vec![(0, 5), (6, 11), (11, 12)],
+                    special_tokens_mask: vec![0, 0, 0],
+                    attention_mask: vec![1, 1, 1],
                     overflowing: vec![],
                 }]
             }

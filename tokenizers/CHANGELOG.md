@@ -37,6 +37,8 @@ implementation from GPT-2
 input text.
 - [#330]: BertNormalizer now keeps the same behavior than the original implementation when
 `strip_accents` is not specified.
+- [#355]: Tokenizer does not use any dynamic dispatch anymore.
+- [#377]: Use byte offsets everywhere (instead of the char offsets)
 
 ### Added
 - [#236]: RobertaProcessing is now also taking care of trimming offsets, and works just as ByteLevel
@@ -48,6 +50,7 @@ activation of the Tensor Cores, while ensuring padding to a multiple of 8.
 - [#298]: Ability to get the currently set truncation/padding params
 - [#311]: Ability to enable/disable the parallelism using the `TOKENIZERS_PARALLELISM` environment
 variable.
+- [#403]: Add `TemplateProcessing` `PostProcessor`.
 
 ### How to migrate
 - Replace any `XXX_to_YYY_offsets()` method call by any of the new ones.
@@ -122,6 +125,10 @@ advised, but that's not the question)
 split up in multiple bytes
 - [#174]: The `LongestFirst` truncation strategy had a bug
 
+[#403]: https://github.com/huggingface/tokenizers/pull/403
+[#377]: https://github.com/huggingface/tokenizers/pull/377
+[#355]: https://github.com/huggingface/tokenizers/pull/355
+[#363]: https://github.com/huggingface/tokenizers/pull/363
 [#330]: https://github.com/huggingface/tokenizers/pull/330
 [#311]: https://github.com/huggingface/tokenizers/pull/311
 [#309]: https://github.com/huggingface/tokenizers/pull/309

@@ -9,6 +9,8 @@ use std::path::{Path, PathBuf};
 
 mod serialization;
 
+type Vocab = HashMap<String, u32>;
+
 #[derive(Debug)]
 pub enum Error {
     MissingUnkToken,
@@ -101,13 +103,11 @@ impl std::fmt::Debug for WordLevel {
 }
 
 impl WordLevel {
-    fn builder() -> WordLevelBuilder {
+    pub fn builder() -> WordLevelBuilder {
         WordLevelBuilder::new()
     }
 
-    /// Initialize a WordLevel model from vocab and merges file.
-    pub fn from_files(vocab_path: &str, unk_token: String) -> Result<WordLevel> {
-        // Read vocab.json
+    pub fn read_file(vocab_path: &str) -> Result<Vocab> {
         let vocab_file = File::open(vocab_path)?;
         let mut vocab_file = BufReader::new(vocab_file);
         let mut buffer = String::new();
@@ -127,7 +127,12 @@ impl WordLevel {
             }
             _ => return Err(Box::new(Error::BadVocabulary)),
         };
+        Ok(vocab)
+    }
 
+    /// Initialize a WordLevel model from vocab and merges file.
+    pub fn from_file(vocab_path: &str, unk_token: String) -> Result<WordLevel> {
+        let vocab = WordLevel::read_file(vocab_path)?;
         Ok(Self::builder().vocab(vocab).unk_token(unk_token).build())
     }
 }
@@ -151,7 +156,7 @@ impl Model for WordLevel {
                 .or_else(|| self.vocab.get(&*self.unk_token))
                 .ok_or(Error::MissingUnkToken)?,
             value: token.to_owned(),
-            offsets: (0, token.chars().count()),
+            offsets: (0, token.len()),
         }])
     }
 

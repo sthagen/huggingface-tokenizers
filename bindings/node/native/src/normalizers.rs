@@ -8,7 +8,8 @@ use std::sync::Arc;
 use tk::normalizers::NormalizerWrapper;
 use tk::NormalizedString;
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
+#[serde(untagged)]
 pub enum JsNormalizerWrapper {
     Sequence(Vec<Arc<NormalizerWrapper>>),
     Wrapped(Arc<NormalizerWrapper>),
@@ -41,7 +42,7 @@ where
 }
 
 /// Normalizer
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Normalizer {
     #[serde(flatten)]
     pub normalizer: Option<JsNormalizerWrapper>,
@@ -159,6 +160,14 @@ fn strip(mut cx: FunctionContext) -> JsResult<JsNormalizer> {
 
     Ok(normalizer)
 }
+/// strip_accents()
+fn strip_accents(mut cx: FunctionContext) -> JsResult<JsNormalizer> {
+    let mut normalizer = JsNormalizer::new::<_, JsNormalizer, _>(&mut cx, vec![])?;
+    let guard = cx.lock();
+    normalizer.borrow_mut(&guard).normalizer = Some(tk::normalizers::strip::StripAccents.into());
+
+    Ok(normalizer)
+}
 
 /// sequence(normalizers: Normalizer[])
 fn sequence(mut cx: FunctionContext) -> JsResult<JsNormalizer> {
@@ -201,6 +210,20 @@ fn lowercase(mut cx: FunctionContext) -> JsResult<JsNormalizer> {
     Ok(normalizer)
 }
 
+/// replace()
+fn replace(mut cx: FunctionContext) -> JsResult<JsNormalizer> {
+    let pattern: String = cx.extract::<String>(0)?;
+    let content: String = cx.extract::<String>(1)?;
+    let mut normalizer = JsNormalizer::new::<_, JsNormalizer, _>(&mut cx, vec![])?;
+    let guard = cx.lock();
+    normalizer.borrow_mut(&guard).normalizer = Some(
+        tk::normalizers::replace::Replace::new(pattern, content)
+            .map_err(|e| Error(e.to_string()))?
+            .into(),
+    );
+    Ok(normalizer)
+}
+
 /// Register everything here
 pub fn register(m: &mut ModuleContext, prefix: &str) -> NeonResult<()> {
     m.export_function(&format!("{}_BertNormalizer", prefix), bert_normalizer)?;
@@ -210,6 +233,51 @@ pub fn register(m: &mut ModuleContext, prefix: &str) -> NeonResult<()> {
     m.export_function(&format!("{}_NFKC", prefix), nfkc)?;
     m.export_function(&format!("{}_Sequence", prefix), sequence)?;
     m.export_function(&format!("{}_Lowercase", prefix), lowercase)?;
+    m.export_function(&format!("{}_Replace", prefix), replace)?;
     m.export_function(&format!("{}_Strip", prefix), strip)?;
+    m.export_function(&format!("{}_StripAccents", prefix), strip_accents)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use tk::normalizers::unicode::{NFC, NFKC};
+    use tk::normalizers::utils::Sequence;
+    use tk::normalizers::NormalizerWrapper;
+
+    #[test]
+    fn serialize() {
+        let js_wrapped: JsNormalizerWrapper = NFKC.into();
+        let js_ser = serde_json::to_string(&js_wrapped).unwrap();
+
+        let rs_wrapped = NormalizerWrapper::NFKC(NFKC);
+        let rs_ser = serde_json::to_string(&rs_wrapped).unwrap();
+        assert_eq!(js_ser, rs_ser);
+
+        let js_norm: Normalizer = serde_json::from_str(&rs_ser).unwrap();
+        match js_norm.normalizer.unwrap() {
+            JsNormalizerWrapper::Wrapped(nfc) => match nfc.as_ref() {
+                NormalizerWrapper::NFKC(_) => {}
+                _ => panic!("Expected NFKC"),
+            },
+            _ => panic!("Expected wrapped, not sequence."),
+        }
+
+        let js_seq: JsNormalizerWrapper = Sequence::new(vec![NFC.into(), NFKC.into()]).into();
+        let js_wrapper_ser = serde_json::to_string(&js_seq).unwrap();
+        let rs_wrapped = NormalizerWrapper::Sequence(Sequence::new(vec![NFC.into(), NFKC.into()]));
+        let rs_ser = serde_json::to_string(&rs_wrapped).unwrap();
+        assert_eq!(js_wrapper_ser, rs_ser);
+
+        let js_seq = Normalizer {
+            normalizer: Some(js_seq),
+        };
+        let js_ser = serde_json::to_string(&js_seq).unwrap();
+        assert_eq!(js_wrapper_ser, js_ser);
+
+        let rs_seq = Sequence::new(vec![NFC.into(), NFKC.into()]);
+        let rs_ser = serde_json::to_string(&rs_seq).unwrap();
+        assert_eq!(js_wrapper_ser, rs_ser);
+    }
 }

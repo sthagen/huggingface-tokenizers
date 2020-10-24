@@ -1,14 +1,22 @@
+from .. import NormalizedString
 from typing import Optional, List
 
 class Normalizer:
-    """ Base class for all normalizers
+    """Base class for all normalizers
 
     This class is not supposed to be instantiated directly. Instead, any implementation of a
     Normalizer will return an instance of this class when instantiated.
     """
 
+    def normalize(self, normalized: NormalizedString):
+        """ Normalize the given NormalizedString in-place """
+        pass
+    def normalize_str(self, sequence: str) -> str:
+        """ Normalize the given str """
+        pass
+
 class BertNormalizer(Normalizer):
-    """ BertNormalizer
+    """BertNormalizer
 
     Takes care of normalizing raw text before giving it to a Bert model.
     This includes cleaning the text, handling accents, chinese chars and lowercasing
@@ -21,7 +29,7 @@ class BertNormalizer(Normalizer):
         strip_accents: Optional[bool] = None,
         lowercase: Optional[bool] = True,
     ) -> None:
-        """ Instantiate a BertNormalizer with the given options.
+        """Instantiate a BertNormalizer with the given options.
 
         Args:
             clean_text: (`optional`) boolean:
@@ -72,13 +80,13 @@ class NFKC(Normalizer):
         pass
 
 class Sequence(Normalizer):
-    """ Allows concatenating multiple other Normalizer as a Sequence.
+    """Allows concatenating multiple other Normalizer as a Sequence.
 
     All the normalizers run in sequence in the given order
     """
 
     def __init__(self, normalizers: List[Normalizer]) -> None:
-        """ Instantiate a new normalization Sequence using the given normalizers
+        """Instantiate a new normalization Sequence using the given normalizers
 
         Args:
             normalizers: List[Normalizer]:
@@ -97,6 +105,30 @@ class Strip(Normalizer):
     """ Strip normalizer """
 
     def __init__(self, left: bool = True, right: bool = True) -> Normalizer:
+        pass
+
+class StripAccents(Normalizer):
+    """ StripAccents normalizer """
+
+    def __init__(self) -> Normalizer:
+        pass
+
+class Nmt(Normalizer):
+    """ Nmt normalizer """
+
+    def __init__(self) -> Normalizer:
+        pass
+
+class Precompiled(Normalizer):
+    """ Precompiled normalizer """
+
+    def __init__(self, precompiled_charsmap: bytes) -> Normalizer:
+        pass
+
+class Replace(Normalizer):
+    """ Replace normalizer """
+
+    def __init__(self, pattern: str, content: str) -> Normalizer:
         pass
 
 def unicode_normalizer_from_str(normalizer: str) -> Normalizer:

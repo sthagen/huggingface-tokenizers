@@ -1,3 +1,5 @@
+#![warn(clippy::all)]
+
 extern crate tokenizers as tk;
 
 mod decoders;
@@ -10,6 +12,7 @@ mod processors;
 mod token;
 mod tokenizer;
 mod trainers;
+mod utils;
 
 use pyo3::prelude::*;
 use pyo3::wrap_pymodule;
@@ -41,6 +44,7 @@ fn trainers(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<trainers::PyTrainer>()?;
     m.add_class::<trainers::PyBpeTrainer>()?;
     m.add_class::<trainers::PyWordPieceTrainer>()?;
+    m.add_class::<trainers::PyUnigramTrainer>()?;
     Ok(())
 }
 
@@ -51,6 +55,7 @@ fn models(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<models::PyBPE>()?;
     m.add_class::<models::PyWordPiece>()?;
     m.add_class::<models::PyWordLevel>()?;
+    m.add_class::<models::PyUnigram>()?;
     Ok(())
 }
 
@@ -64,6 +69,10 @@ fn pre_tokenizers(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<pre_tokenizers::PyBertPreTokenizer>()?;
     m.add_class::<pre_tokenizers::PyMetaspace>()?;
     m.add_class::<pre_tokenizers::PyCharDelimiterSplit>()?;
+    m.add_class::<pre_tokenizers::PyPunctuation>()?;
+    m.add_class::<pre_tokenizers::PySequence>()?;
+    m.add_class::<pre_tokenizers::PyDigits>()?;
+    m.add_class::<pre_tokenizers::PyUnicodeScripts>()?;
     Ok(())
 }
 
@@ -85,6 +94,7 @@ fn processors(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<processors::PyBertProcessing>()?;
     m.add_class::<processors::PyRobertaProcessing>()?;
     m.add_class::<processors::PyByteLevel>()?;
+    m.add_class::<processors::PyTemplateProcessing>()?;
     Ok(())
 }
 
@@ -100,12 +110,18 @@ fn normalizers(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<normalizers::PySequence>()?;
     m.add_class::<normalizers::PyLowercase>()?;
     m.add_class::<normalizers::PyStrip>()?;
+    m.add_class::<normalizers::PyStripAccents>()?;
+    m.add_class::<normalizers::PyNmt>()?;
+    m.add_class::<normalizers::PyPrecompiled>()?;
+    m.add_class::<normalizers::PyReplace>()?;
     Ok(())
 }
 
 /// Tokenizers Module
 #[pymodule]
 fn tokenizers(_py: Python, m: &PyModule) -> PyResult<()> {
+    env_logger::init_from_env("TOKENIZERS_LOG");
+
     // Register the fork callback
     #[cfg(target_family = "unix")]
     unsafe {
@@ -117,7 +133,11 @@ fn tokenizers(_py: Python, m: &PyModule) -> PyResult<()> {
 
     m.add_class::<tokenizer::PyTokenizer>()?;
     m.add_class::<tokenizer::PyAddedToken>()?;
+    m.add_class::<token::PyToken>()?;
     m.add_class::<encoding::PyEncoding>()?;
+    m.add_class::<utils::PyRegex>()?;
+    m.add_class::<utils::PyNormalizedString>()?;
+    m.add_class::<utils::PyPreTokenizedString>()?;
     m.add_wrapped(wrap_pymodule!(models))?;
     m.add_wrapped(wrap_pymodule!(pre_tokenizers))?;
     m.add_wrapped(wrap_pymodule!(decoders))?;

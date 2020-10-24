@@ -25,7 +25,7 @@ jobs:
           architecture: "x64"
 
       - name: Install dependencies
-        run: pip install black
+        run: pip install black==20.8b1
 
       - name: Check style
         working-directory: ./bindings/python
@@ -79,7 +79,7 @@ jobs:
         uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
-          components: rustfmt
+          components: rustfmt, clippy
 
           # # Necessary for now for the cargo cache: https://github.com/actions/cache/issues/133#issuecomment-599102035
           # - run: sudo chown -R $(whoami):$(id -ng) ~/.cargo/
@@ -103,6 +103,12 @@ jobs:
           command: fmt
           args: --manifest-path ./bindings/python/Cargo.toml -- --check
 
+      - name: Lint with Clippy
+        uses: actions-rs/cargo@v1
+        with:
+          command: clippy
+          args: --manifest-path ./bindings/python/Cargo.toml --all-targets --all-features -- -D warnings
+
       - name: Install Python
         uses: actions/setup-python@v1
         with:
@@ -114,6 +120,6 @@ jobs:
         run: |
           python -m venv .env
           source .env/bin/activate
-          pip install pytest requests setuptools_rust 
+          pip install pytest requests setuptools_rust numpy
           python setup.py develop
           make test

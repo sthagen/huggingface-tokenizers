@@ -56,7 +56,9 @@ impl<'de> Visitor<'de> for WhitespaceVisitor {
     where
         A: serde::de::MapAccess<'de>,
     {
-        match map.next_entry::<&str, &str>()? {
+        let maybe_type = map.next_entry::<String, String>()?;
+        let maybe_type_str = maybe_type.as_ref().map(|(k, v)| (k.as_str(), v.as_str()));
+        match maybe_type_str {
             Some(("type", "Whitespace")) => Ok(Whitespace::default()),
             Some((_, ty)) => Err(Error::custom(&format!("Expected Whitespace, got {}", ty))),
             None => Err(Error::custom("Expected type: Whitespace")),
@@ -79,41 +81,37 @@ impl PreTokenizer for WhitespaceSplit {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{OffsetReferential, PreTokenizer};
+    use crate::{OffsetReferential, OffsetType, PreTokenizer};
 
     #[test]
     fn basic() {
         let tests = vec![
             (
                 "Hey man!",
-                vec![
-                    ("Hey", (0, 3)),
-                    ("", (3, 4)),
-                    ("man", (4, 7)),
-                    ("!", (7, 8)),
-                ],
+                vec![("Hey", (0, 3)), ("man", (4, 7)), ("!", (7, 8))],
             ),
             (
                 "How are you doing?",
                 vec![
                     ("How", (0, 3)),
-                    ("", (3, 4)),
                     ("are", (4, 7)),
-                    ("", (7, 8)),
                     ("you", (8, 11)),
-                    ("", (11, 12)),
                     ("doing", (12, 17)),
                     ("?", (17, 18)),
                 ],
             ),
-            ("\n", vec![("", (0, 1))]),
+            ("\n", vec![]),
         ];
         let pretok = Whitespace::default();
         for (s, res) in tests {
             let mut pretokenized = PreTokenizedString::from(s);
             pretok.pre_tokenize(&mut pretokenized).unwrap();
             assert_eq!(
-                pretokenized.get_normalized(OffsetReferential::Original),
+                pretokenized
+                    .get_splits(OffsetReferential::Original, OffsetType::Byte)
+                    .into_iter()
+                    .map(|(s, o, _)| (s, o))
+                    .collect::<Vec<_>>(),
                 res
             );
         }
@@ -122,19 +120,10 @@ mod tests {
     #[test]
     fn whitespace_split() {
         let tests = vec![
-            (
-                "Hey man!",
-                vec![("Hey", (0, 3)), ("", (3, 4)), ("man!", (4, 8))],
-            ),
+            ("Hey man!", vec![("Hey", (0, 3)), ("man!", (4, 8))]),
             (
                 "Hey, man, Good?",
-                vec![
-                    ("Hey,", (0, 4)),
-                    ("", (4, 5)),
-                    ("man,", (5, 9)),
-                    ("", (9, 10)),
-                    ("Good?", (10, 15)),
-                ],
+                vec![("Hey,", (0, 4)), ("man,", (5, 9)), ("Good?", (10, 15))],
             ),
         ];
         let pretok = WhitespaceSplit;
@@ -142,7 +131,11 @@ mod tests {
             let mut pretokenized = PreTokenizedString::from(s);
             pretok.pre_tokenize(&mut pretokenized).unwrap();
             assert_eq!(
-                pretokenized.get_normalized(OffsetReferential::Original),
+                pretokenized
+                    .get_splits(OffsetReferential::Original, OffsetType::Byte)
+                    .into_iter()
+                    .map(|(s, o, _)| (s, o))
+                    .collect::<Vec<_>>(),
                 res
             );
         }

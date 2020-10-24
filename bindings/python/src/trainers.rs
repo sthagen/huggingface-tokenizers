@@ -73,7 +73,7 @@ impl PyBpeTrainer {
                                         token.is_special_token = true;
                                         Ok(token.get_token())
                                     } else {
-                                        Err(exceptions::Exception::py_err(
+                                        Err(exceptions::PyTypeError::new_err(
                                             "special_tokens must be a List[Union[str, AddedToken]]",
                                         ))
                                     }
@@ -87,7 +87,7 @@ impl PyBpeTrainer {
                         builder = builder.initial_alphabet(
                             alphabet
                                 .into_iter()
-                                .map(|s| s.chars().nth(0))
+                                .map(|s| s.chars().next())
                                 .filter(|c| c.is_some())
                                 .map(|c| c.unwrap())
                                 .collect(),
@@ -137,7 +137,7 @@ impl PyWordPieceTrainer {
                                         token.is_special_token = true;
                                         Ok(token.get_token())
                                     } else {
-                                        Err(exceptions::Exception::py_err(
+                                        Err(exceptions::PyTypeError::new_err(
                                             "special_tokens must be a List[Union[str, AddedToken]]",
                                         ))
                                     }
@@ -151,7 +151,7 @@ impl PyWordPieceTrainer {
                         builder = builder.initial_alphabet(
                             alphabet
                                 .into_iter()
-                                .map(|s| s.chars().nth(0))
+                                .map(|s| s.chars().next())
                                 .filter(|c| c.is_some())
                                 .map(|c| c.unwrap())
                                 .collect(),
@@ -170,5 +170,60 @@ impl PyWordPieceTrainer {
             PyWordPieceTrainer {},
             PyTrainer::new(builder.build().into()),
         ))
+    }
+}
+
+#[pyclass(extends=PyTrainer, name=UnigramTrainer)]
+pub struct PyUnigramTrainer {}
+#[pymethods]
+impl PyUnigramTrainer {
+    /// Create a new UnigramTrainer with the given configuration
+    #[new]
+    #[args(kwargs = "**")]
+    pub fn new(kwargs: Option<&PyDict>) -> PyResult<(Self, PyTrainer)> {
+        let mut builder = tk::models::unigram::UnigramTrainer::builder();
+        if let Some(kwargs) = kwargs {
+            for (key, val) in kwargs {
+                let key: &str = key.extract()?;
+                match key {
+                    "vocab_size" => builder.vocab_size(val.extract()?),
+                    "show_progress" => builder.show_progress(val.extract()?),
+                    "n_sub_iterations" => builder.n_sub_iterations(val.extract()?),
+                    "shrinking_factor" => builder.shrinking_factor(val.extract()?),
+                    "unk_token" => builder.unk_token(val.extract()?),
+                    "max_piece_length" => builder.max_piece_length(val.extract()?),
+                    "seed_size" => builder.seed_size(val.extract()?),
+                    "special_tokens" => builder.special_tokens(
+                        val.cast_as::<PyList>()?
+                            .into_iter()
+                            .map(|token| {
+                                if let Ok(content) = token.extract::<String>() {
+                                    Ok(PyAddedToken::from(content, Some(true)).get_token())
+                                } else if let Ok(mut token) =
+                                    token.extract::<PyRefMut<PyAddedToken>>()
+                                {
+                                    token.is_special_token = true;
+                                    Ok(token.get_token())
+                                } else {
+                                    Err(exceptions::PyTypeError::new_err(
+                                        "special_tokens must be a List[Union[str, AddedToken]]",
+                                    ))
+                                }
+                            })
+                            .collect::<PyResult<Vec<_>>>()?,
+                    ),
+                    _ => {
+                        println!("Ignored unknown kwargs option {}", key);
+                        &mut builder
+                    }
+                };
+            }
+        }
+
+        let trainer: tokenizers::models::unigram::UnigramTrainer =
+            builder.build().map_err(|e| {
+                exceptions::PyException::new_err(format!("Cannot build UnigramTrainer: {}", e))
+            })?;
+        Ok((PyUnigramTrainer {}, PyTrainer::new(trainer.into())))
     }
 }

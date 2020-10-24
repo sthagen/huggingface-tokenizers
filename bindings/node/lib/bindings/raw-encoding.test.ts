@@ -2,11 +2,53 @@ import { promisify } from "util";
 
 import { PaddingDirection } from "./enums";
 import { Model, WordPiece, WordPieceOptions } from "./models";
-import { whitespacePreTokenizer } from "./pre-tokenizers";
+import {
+  punctuationPreTokenizer,
+  sequencePreTokenizer,
+  whitespacePreTokenizer,
+} from "./pre-tokenizers";
 import { RawEncoding } from "./raw-encoding";
 import { EncodeOptions, InputSequence, Tokenizer } from "./tokenizer";
 
 const MOCKS_DIR = __dirname + "/__mocks__";
+
+describe("Can modify pretokenizers on the fly", () => {
+  let encoding: RawEncoding;
+  let encode: (
+    sequence: InputSequence,
+    pair?: InputSequence | null,
+    options?: EncodeOptions | null
+  ) => Promise<RawEncoding>;
+  let tokenizer: Tokenizer;
+
+  beforeAll(async () => {
+    const model = await promisify<string, WordPieceOptions, Model>(WordPiece.fromFile)(
+      `${MOCKS_DIR}/vocab.txt`,
+      {
+        continuingSubwordPrefix: "##",
+      }
+    );
+
+    tokenizer = new Tokenizer(model);
+    encode = promisify(tokenizer.encode.bind(tokenizer));
+  });
+
+  it("Can change pre tokenizer", async () => {
+    const input = "my  name is john.!?";
+    tokenizer.setPreTokenizer(sequencePreTokenizer([whitespacePreTokenizer()]));
+
+    encoding = await encode(input, null);
+    expect(encoding.getIds()).toEqual([0, 1, 2, 3, 4, 6]);
+
+    // Change pre tokenizer
+    tokenizer.setPreTokenizer(
+      sequencePreTokenizer([whitespacePreTokenizer(), punctuationPreTokenizer()])
+    );
+
+    encoding = await encode(input, null);
+    expect(encoding.getIds()).toEqual([0, 1, 2, 3, 4, 6, 6, 6]);
+  });
+});
 
 describe("RawEncoding", () => {
   const originalString = "my name is john";
@@ -18,7 +60,7 @@ describe("RawEncoding", () => {
   ) => Promise<RawEncoding>;
 
   beforeAll(async () => {
-    const model = await promisify<string, WordPieceOptions, Model>(WordPiece.fromFiles)(
+    const model = await promisify<string, WordPieceOptions, Model>(WordPiece.fromFile)(
       `${MOCKS_DIR}/vocab.txt`,
       {
         continuingSubwordPrefix: "##",

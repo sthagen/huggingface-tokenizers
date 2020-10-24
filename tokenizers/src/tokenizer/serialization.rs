@@ -132,7 +132,7 @@ where
                     builder = builder.with_normalizer(map.next_value()?);
                 }
                 "pre_tokenizer" => {
-                    builder = builder.with_pretokenizer(map.next_value()?);
+                    builder = builder.with_pre_tokenizer(map.next_value()?);
                 }
                 "model" => {
                     builder = builder.with_model(map.next_value()?);
@@ -141,7 +141,7 @@ where
                     builder = builder.with_decoder(map.next_value()?);
                 }
                 "post_processor" => {
-                    builder = builder.with_postprocessor(map.next_value()?);
+                    builder = builder.with_post_processor(map.next_value()?);
                 }
                 _ => {}
             };
@@ -162,7 +162,7 @@ where
             // Warn the user if the id is different than expected
             let received_id = tokenizer.token_to_id(&tk);
             if received_id != Some(token.id) {
-                println!(
+                warn!(
                     "Warning: Token '{}' was expected to have ID '{}' but was given ID '{}'",
                     tk,
                     token.id,

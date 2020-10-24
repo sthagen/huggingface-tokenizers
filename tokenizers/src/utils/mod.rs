@@ -1,7 +1,24 @@
+pub mod cache;
 pub mod iter;
 pub mod padding;
 pub mod parallelism;
 pub mod truncation;
+
+use serde::{Serialize, Serializer};
+use std::collections::{BTreeMap, HashMap};
+
+pub fn ordered_map<S, K, V>(
+    value: &HashMap<K, V>,
+    serializer: S,
+) -> std::result::Result<S::Ok, S::Error>
+where
+    S: Serializer,
+    K: Serialize + std::cmp::Ord,
+    V: Serialize,
+{
+    let ordered: BTreeMap<_, _> = value.iter().collect();
+    ordered.serialize(serializer)
+}
 
 #[macro_use]
 macro_rules! impl_enum_from (
@@ -45,7 +62,9 @@ macro_rules! impl_serde_unit_struct (
             fn visit_map<A>(self, mut map: A) -> std::result::Result<Self::Value, A::Error> where
                 A: serde::de::MapAccess<'de>, {
                 let self_ty_str = stringify!($self_ty);
-                match map.next_entry::<&str, &str>()? {
+                let maybe_type = map.next_entry::<String, String>()?;
+                let maybe_type_str = maybe_type.as_ref().map(|(k, v)| (k.as_str(), v.as_str()));
+                match maybe_type_str {
                     Some(("type", stringify!($self_ty))) => Ok($self_ty),
                     Some((_, ty)) => Err(serde::de::Error::custom(&format!("Expected {}, got {}", self_ty_str, ty))),
                     None => Err(serde::de::Error::custom(&format!("Expected type : {}", self_ty_str)))

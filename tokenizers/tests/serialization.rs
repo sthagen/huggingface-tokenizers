@@ -36,7 +36,7 @@ fn wordpiece_serde() {
 
 #[test]
 fn wordlevel_serde() {
-    let wordlevel = WordLevel::from_files("data/gpt2-vocab.json", "<unk>".into()).unwrap();
+    let wordlevel = WordLevel::from_file("data/gpt2-vocab.json", "<unk>".into()).unwrap();
     let ser = serde_json::to_string(&wordlevel).unwrap();
     let de = serde_json::from_str(&ser).unwrap();
     assert_eq!(wordlevel, de);
@@ -192,4 +192,9 @@ fn tokenizer() {
         DecoderWrapper,
     > = serde_json::from_str(&ser).unwrap();
     assert_eq!(serde_json::to_string(&de).unwrap(), ser);
+}
+
+#[test]
+fn test_deserialize_long_file() {
+    let _tokenizer = Tokenizer::from_file("data/albert-base-v1-tokenizer.json").unwrap();
 }
