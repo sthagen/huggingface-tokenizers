@@ -8,6 +8,10 @@ use std::io::{BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 
 mod serialization;
+mod trainer;
+
+// Re-export
+pub use trainer::*;
 
 type Vocab = HashMap<String, u32>;
 
@@ -31,6 +35,7 @@ impl fmt::Display for Error {
 }
 
 struct Config {
+    files: Option<String>,
     vocab: HashMap<String, u32>,
     unk_token: String,
 }
@@ -45,6 +50,7 @@ impl Default for WordLevelBuilder {
     fn default() -> Self {
         Self {
             config: Config {
+                files: None,
                 vocab: HashMap::new(),
                 unk_token: String::from("<unk>"),
             },
@@ -56,6 +62,12 @@ impl WordLevelBuilder {
     /// Construct a new `WordLevelBuilder`.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Set the input files.
+    pub fn files(mut self, vocab: String) -> Self {
+        self.config.files = Some(vocab);
+        self
     }
 
     /// Set the vocab (token -> ID) mapping.
@@ -71,18 +83,23 @@ impl WordLevelBuilder {
     }
 
     /// Contructs a `WordLevel` model that uses the `WordLevelBuilder`'s configuration.
-    pub fn build(self) -> WordLevel {
+    pub fn build(mut self) -> Result<WordLevel> {
+        if let Some(vocab) = self.config.files {
+            self.config.vocab = WordLevel::read_file(&vocab)?;
+        }
+
         let vocab_r = self
             .config
             .vocab
             .iter()
             .map(|(key, val)| (*val, key.to_owned()))
             .collect();
-        WordLevel {
+
+        Ok(WordLevel {
             vocab: self.config.vocab,
             vocab_r,
             unk_token: self.config.unk_token,
-        }
+        })
     }
 }
 
@@ -90,7 +107,7 @@ impl WordLevelBuilder {
 pub struct WordLevel {
     vocab: HashMap<String, u32>,
     vocab_r: HashMap<u32, String>,
-    unk_token: String,
+    pub unk_token: String,
 }
 
 impl std::fmt::Debug for WordLevel {
@@ -133,7 +150,7 @@ impl WordLevel {
     /// Initialize a WordLevel model from vocab and merges file.
     pub fn from_file(vocab_path: &str, unk_token: String) -> Result<WordLevel> {
         let vocab = WordLevel::read_file(vocab_path)?;
-        Ok(Self::builder().vocab(vocab).unk_token(unk_token).build())
+        Self::builder().vocab(vocab).unk_token(unk_token).build()
     }
 }
 
@@ -148,6 +165,8 @@ impl Default for WordLevel {
 }
 
 impl Model for WordLevel {
+    type Trainer = WordLevelTrainer;
+
     fn tokenize(&self, token: &str) -> Result<Vec<Token>> {
         Ok(vec![Token {
             id: *self
@@ -164,12 +183,12 @@ impl Model for WordLevel {
         self.vocab.get(token).copied()
     }
 
-    fn id_to_token(&self, id: u32) -> Option<&str> {
-        self.vocab_r.get(&id).map(String::as_ref)
+    fn id_to_token(&self, id: u32) -> Option<String> {
+        self.vocab_r.get(&id).cloned()
     }
 
-    fn get_vocab(&self) -> &HashMap<String, u32> {
-        &self.vocab
+    fn get_vocab(&self) -> HashMap<String, u32> {
+        self.vocab.clone()
     }
 
     fn get_vocab_size(&self) -> usize {
@@ -192,5 +211,9 @@ impl Model for WordLevel {
         vocab_file.write_all(&serialized.as_bytes())?;
 
         Ok(vec![vocab_path])
+    }
+
+    fn get_trainer(&self) -> Self::Trainer {
+        WordLevelTrainer::default()
     }
 }

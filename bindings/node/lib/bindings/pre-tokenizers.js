@@ -10,4 +10,6 @@ module.exports = {
   charDelimiterSplitPreTokenizer: native.pre_tokenizers_CharDelimiterSplit,
   punctuationPreTokenizer: native.pre_tokenizers_Punctuation,
   sequencePreTokenizer: native.pre_tokenizers_Sequence,
+  digitsPreTokenizer: native.pre_tokenizers_Digits,
+  splitPreTokenizer: native.pre_tokenizers_Split,
 };

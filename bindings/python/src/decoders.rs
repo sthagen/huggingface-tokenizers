@@ -1,5 +1,6 @@
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
+use crate::utils::PyChar;
 use pyo3::exceptions;
 use pyo3::prelude::*;
 use pyo3::types::*;
@@ -15,6 +16,10 @@ use tokenizers as tk;
 
 use super::error::ToPyResult;
 
+/// Base class for all decoders
+///
+/// This class is not supposed to be instantiated directly. Instead, any implementation of
+/// a Decoder will return an instance of this class when instantiated.
 #[pyclass(dict, module = "tokenizers.decoders", name=Decoder)]
 #[derive(Clone, Deserialize, Serialize)]
 pub struct PyDecoder {
@@ -33,7 +38,7 @@ impl PyDecoder {
         let py = gil.python();
         Ok(match &self.decoder {
             PyDecoderWrapper::Custom(_) => Py::new(py, base)?.into_py(py),
-            PyDecoderWrapper::Wrapped(inner) => match inner.as_ref() {
+            PyDecoderWrapper::Wrapped(inner) => match &*inner.as_ref().read().unwrap() {
                 DecoderWrapper::Metaspace(_) => Py::new(py, (PyMetaspaceDec {}, base))?.into_py(py),
                 DecoderWrapper::WordPiece(_) => Py::new(py, (PyWordPieceDec {}, base))?.into_py(py),
                 DecoderWrapper::ByteLevel(_) => Py::new(py, (PyByteLevelDec {}, base))?.into_py(py),
@@ -53,7 +58,9 @@ impl Decoder for PyDecoder {
 impl PyDecoder {
     #[staticmethod]
     fn custom(decoder: PyObject) -> PyResult<Self> {
-        let decoder = PyDecoderWrapper::Custom(CustomDecoder::new(decoder).map(Arc::new)?);
+        let decoder = PyDecoderWrapper::Custom(
+            CustomDecoder::new(decoder).map(|d| Arc::new(RwLock::new(d)))?,
+        );
         Ok(PyDecoder::new(decoder))
     }
 
@@ -82,12 +89,60 @@ impl PyDecoder {
         }
     }
 
+    /// Decode the given list of tokens to a final string
+    ///
+    /// Args:
+    ///     tokens (:obj:`List[str]`):
+    ///         The list of tokens to decode
+    ///
+    /// Returns:
+    ///     :obj:`str`: The decoded string
+    #[text_signature = "(self, tokens)"]
     fn decode(&self, tokens: Vec<String>) -> PyResult<String> {
         ToPyResult(self.decoder.decode(tokens)).into()
     }
 }
 
+macro_rules! getter {
+    ($self: ident, $variant: ident, $($name: tt)+) => {{
+        let super_ = $self.as_ref();
+        if let PyDecoderWrapper::Wrapped(ref wrap) = super_.decoder {
+            if let DecoderWrapper::$variant(ref dec) = *wrap.read().unwrap() {
+                dec.$($name)+
+            } else {
+                unreachable!()
+            }
+        } else {
+            unreachable!()
+        }
+    }};
+}
+
+macro_rules! setter {
+    ($self: ident, $variant: ident, $name: ident, $value: expr) => {{
+        let super_ = $self.as_ref();
+        if let PyDecoderWrapper::Wrapped(ref wrap) = super_.decoder {
+            if let DecoderWrapper::$variant(ref mut dec) = *wrap.write().unwrap() {
+                dec.$name = $value;
+            }
+        }
+    }};
+    ($self: ident, $variant: ident, @$name: ident, $value: expr) => {{
+        let super_ = $self.as_ref();
+        if let PyDecoderWrapper::Wrapped(ref wrap) = super_.decoder {
+            if let DecoderWrapper::$variant(ref mut dec) = *wrap.write().unwrap() {
+                dec.$name($value);
+            }
+        }
+    }};
+}
+
+/// ByteLevel Decoder
+///
+/// This decoder is to be used in tandem with the :class:`~tokenizers.pre_tokenizers.ByteLevel`
+/// :class:`~tokenizers.pre_tokenizers.PreTokenizer`.
 #[pyclass(extends=PyDecoder, module = "tokenizers.decoders", name=ByteLevel)]
+#[text_signature = "(self)"]
 pub struct PyByteLevelDec {}
 #[pymethods]
 impl PyByteLevelDec {
@@ -97,81 +152,116 @@ impl PyByteLevelDec {
     }
 }
 
+/// WordPiece Decoder
+///
+/// Args:
+///     prefix (:obj:`str`, `optional`, defaults to :obj:`##`):
+///         The prefix to use for subwords that are not a beginning-of-word
+///
+///     cleanup (:obj:`bool`, `optional`, defaults to :obj:`True`):
+///         Whether to cleanup some tokenization artifacts. Mainly spaces before punctuation,
+///         and some abbreviated english forms.
 #[pyclass(extends=PyDecoder, module = "tokenizers.decoders", name=WordPiece)]
+#[text_signature = "(self, prefix=\"##\", cleanup=True)"]
 pub struct PyWordPieceDec {}
 #[pymethods]
 impl PyWordPieceDec {
+    #[getter]
+    fn get_prefix(self_: PyRef<Self>) -> String {
+        getter!(self_, WordPiece, prefix.clone())
+    }
+
+    #[setter]
+    fn set_prefix(self_: PyRef<Self>, prefix: String) {
+        setter!(self_, WordPiece, prefix, prefix);
+    }
+
+    #[getter]
+    fn get_cleanup(self_: PyRef<Self>) -> bool {
+        getter!(self_, WordPiece, cleanup)
+    }
+
+    #[setter]
+    fn set_cleanup(self_: PyRef<Self>, cleanup: bool) {
+        setter!(self_, WordPiece, cleanup, cleanup);
+    }
+
     #[new]
-    #[args(kwargs = "**")]
-    fn new(kwargs: Option<&PyDict>) -> PyResult<(Self, PyDecoder)> {
-        let mut prefix = String::from("##");
-        let mut cleanup = true;
-
-        if let Some(kwargs) = kwargs {
-            if let Some(p) = kwargs.get_item("prefix") {
-                prefix = p.extract()?;
-            }
-            if let Some(c) = kwargs.get_item("cleanup") {
-                cleanup = c.extract()?;
-            }
-        }
-
+    #[args(prefix = "String::from(\"##\")", cleanup = "true")]
+    fn new(prefix: String, cleanup: bool) -> PyResult<(Self, PyDecoder)> {
         Ok((PyWordPieceDec {}, WordPiece::new(prefix, cleanup).into()))
     }
 }
 
+/// Metaspace Decoder
+///
+/// Args:
+///     replacement (:obj:`str`, `optional`, defaults to :obj:`▁`):
+///         The replacement character. Must be exactly one character. By default we
+///         use the `▁` (U+2581) meta symbol (Same as in SentencePiece).
+///
+///     add_prefix_space (:obj:`bool`, `optional`, defaults to :obj:`True`):
+///         Whether to add a space to the first word if there isn't already one. This
+///         lets us treat `hello` exactly like `say hello`.
 #[pyclass(extends=PyDecoder, module = "tokenizers.decoders", name=Metaspace)]
+#[text_signature = "(self, replacement = \"▁\", add_prefix_space = True)"]
 pub struct PyMetaspaceDec {}
 #[pymethods]
 impl PyMetaspaceDec {
+    #[getter]
+    fn get_replacement(self_: PyRef<Self>) -> String {
+        getter!(self_, Metaspace, get_replacement().to_string())
+    }
+
+    #[setter]
+    fn set_replacement(self_: PyRef<Self>, replacement: PyChar) {
+        setter!(self_, Metaspace, @set_replacement, replacement.0);
+    }
+
+    #[getter]
+    fn get_add_prefix_space(self_: PyRef<Self>) -> bool {
+        getter!(self_, Metaspace, add_prefix_space)
+    }
+
+    #[setter]
+    fn set_add_prefix_space(self_: PyRef<Self>, add_prefix_space: bool) {
+        setter!(self_, Metaspace, add_prefix_space, add_prefix_space);
+    }
+
     #[new]
-    #[args(kwargs = "**")]
-    fn new(kwargs: Option<&PyDict>) -> PyResult<(Self, PyDecoder)> {
-        let mut replacement = '▁';
-        let mut add_prefix_space = true;
-
-        if let Some(kwargs) = kwargs {
-            for (key, value) in kwargs {
-                let key: &str = key.extract()?;
-                match key {
-                    "replacement" => {
-                        let s: &str = value.extract()?;
-                        replacement = s.chars().next().ok_or_else(|| {
-                            exceptions::PyValueError::new_err("replacement must be a character")
-                        })?;
-                    }
-                    "add_prefix_space" => add_prefix_space = value.extract()?,
-                    _ => println!("Ignored unknown kwarg option {}", key),
-                }
-            }
-        }
-
+    #[args(replacement = "PyChar('▁')", add_prefix_space = "true")]
+    fn new(replacement: PyChar, add_prefix_space: bool) -> PyResult<(Self, PyDecoder)> {
         Ok((
             PyMetaspaceDec {},
-            Metaspace::new(replacement, add_prefix_space).into(),
+            Metaspace::new(replacement.0, add_prefix_space).into(),
         ))
     }
 }
 
+/// BPEDecoder Decoder
+///
+/// Args:
+///     suffix (:obj:`str`, `optional`, defaults to :obj:`</w>`):
+///         The suffix that was used to caracterize an end-of-word. This suffix will
+///         be replaced by whitespaces during the decoding
 #[pyclass(extends=PyDecoder, module = "tokenizers.decoders", name=BPEDecoder)]
+#[text_signature = "(self, suffix=\"</w>\")"]
 pub struct PyBPEDecoder {}
 #[pymethods]
 impl PyBPEDecoder {
+    #[getter]
+    fn get_suffix(self_: PyRef<Self>) -> String {
+        getter!(self_, BPE, suffix.clone())
+    }
+
+    #[setter]
+    fn set_suffix(self_: PyRef<Self>, suffix: String) {
+        setter!(self_, BPE, suffix, suffix);
+    }
+
     #[new]
-    #[args(kwargs = "**")]
-    fn new(kwargs: Option<&PyDict>) -> PyResult<(Self, PyDecoder)> {
-        let mut suffix = String::from("</w>");
-
-        if let Some(kwargs) = kwargs {
-            for (key, value) in kwargs {
-                let key: &str = key.extract()?;
-                match key {
-                    "suffix" => suffix = value.extract()?,
-                    _ => println!("Ignored unknown kwarg option {}", key),
-                }
-            }
-        }
-
+    #[args(suffix = "String::from(\"</w>\")")]
+    fn new(suffix: String) -> PyResult<(Self, PyDecoder)> {
         Ok((PyBPEDecoder {}, BPEDecoder::new(suffix).into()))
     }
 }
@@ -222,8 +312,8 @@ impl<'de> Deserialize<'de> for CustomDecoder {
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(untagged)]
 pub(crate) enum PyDecoderWrapper {
-    Custom(Arc<CustomDecoder>),
-    Wrapped(Arc<DecoderWrapper>),
+    Custom(Arc<RwLock<CustomDecoder>>),
+    Wrapped(Arc<RwLock<DecoderWrapper>>),
 }
 
 impl<I> From<I> for PyDecoderWrapper
@@ -231,7 +321,7 @@ where
     I: Into<DecoderWrapper>,
 {
     fn from(norm: I) -> Self {
-        PyDecoderWrapper::Wrapped(Arc::new(norm.into()))
+        PyDecoderWrapper::Wrapped(Arc::new(RwLock::new(norm.into())))
     }
 }
 
@@ -249,15 +339,15 @@ where
 impl Decoder for PyDecoderWrapper {
     fn decode(&self, tokens: Vec<String>) -> tk::Result<String> {
         match self {
-            PyDecoderWrapper::Wrapped(inner) => inner.decode(tokens),
-            PyDecoderWrapper::Custom(inner) => inner.decode(tokens),
+            PyDecoderWrapper::Wrapped(inner) => inner.read().unwrap().decode(tokens),
+            PyDecoderWrapper::Custom(inner) => inner.read().unwrap().decode(tokens),
         }
     }
 }
 
 #[cfg(test)]
 mod test {
-    use std::sync::Arc;
+    use std::sync::{Arc, RwLock};
 
     use pyo3::prelude::*;
     use tk::decoders::metaspace::Metaspace;
@@ -285,7 +375,7 @@ mod test {
         assert_eq!(py_ser, rs_ser);
         let py_dec: PyDecoder = serde_json::from_str(&rs_ser).unwrap();
         match py_dec.decoder {
-            PyDecoderWrapper::Wrapped(msp) => match msp.as_ref() {
+            PyDecoderWrapper::Wrapped(msp) => match *msp.as_ref().read().unwrap() {
                 DecoderWrapper::Metaspace(_) => {}
                 _ => panic!("Expected Metaspace"),
             },
@@ -297,7 +387,8 @@ mod test {
             let obj: PyObject = Py::new(py, py_msp).unwrap().into_py(py);
             obj
         });
-        let py_seq = PyDecoderWrapper::Custom(Arc::new(CustomDecoder::new(obj).unwrap()));
+        let py_seq =
+            PyDecoderWrapper::Custom(Arc::new(RwLock::new(CustomDecoder::new(obj).unwrap())));
         assert!(serde_json::to_string(&py_seq).is_err());
     }
 }

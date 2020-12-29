@@ -3,7 +3,7 @@
 use super::{Pair, WithFirstLastIterator, Word, BPE};
 use crate::parallelism::*;
 use crate::tokenizer::{AddedToken, Result, Trainer};
-use indicatif::{ProgressBar, ProgressStyle};
+use crate::utils::progress::{ProgressBar, ProgressStyle};
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 
@@ -133,44 +133,49 @@ impl BpeTrainerBuilder {
             initial_alphabet: self.config.initial_alphabet,
             continuing_subword_prefix: self.config.continuing_subword_prefix,
             end_of_word_suffix: self.config.end_of_word_suffix,
+            words: HashMap::new(),
         }
     }
 }
 
-/// In charge of training a `BPE` model from a mapping of words to word counts.
+/// In charge of training a `BPE` model
 ///
 /// # Examples
 ///
 /// ```
-/// use std::collections::HashMap;
 /// use tokenizers::tokenizer::Trainer;
-/// use tokenizers::models::bpe::BpeTrainer;
+/// use tokenizers::models::bpe::{BPE, BpeTrainer};
 ///
-/// let word_counts: HashMap<String, u32> = [
-///     (String::from("Hello"), 1),
-///     (String::from("World"), 1),
-/// ].iter().cloned().collect();
-/// let trainer = BpeTrainer::default();
-/// let (model, special_tokens) = trainer.train(word_counts).unwrap();
+/// let sequences = vec![ "Hello", "World" ];
+///
+/// let mut trainer = BpeTrainer::default();
+/// trainer.feed(sequences.iter(), |s| Ok(vec![s.to_owned()]));
+///
+/// let mut model = BPE::default();
+/// let special_tokens = trainer.train(&mut model).unwrap();
 /// ```
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq)]
 pub struct BpeTrainer {
     /// The minimum frequency a pair must have to produce a merge operation
-    min_frequency: u32,
+    pub min_frequency: u32,
     /// The target vocabulary size
-    vocab_size: usize,
+    pub vocab_size: usize,
     /// Whether to show progress while training
-    show_progress: bool,
+    pub show_progress: bool,
     /// A list of special tokens that the model should know of
-    special_tokens: Vec<AddedToken>,
+    pub special_tokens: Vec<AddedToken>,
     /// Whether to limit the number of initial tokens that can be kept before computing merges
-    limit_alphabet: Option<usize>,
+    pub limit_alphabet: Option<usize>,
     /// The initial alphabet we want absolutely to include. This allows to cover
     /// some characters that are not necessarily in the training set
-    initial_alphabet: HashSet<char>,
+    pub initial_alphabet: HashSet<char>,
     /// An optional prefix to use on any subword that exist only behind another one
-    continuing_subword_prefix: Option<String>,
+    pub continuing_subword_prefix: Option<String>,
     /// An optional suffix to caracterize and end-of-word subword
-    end_of_word_suffix: Option<String>,
+    pub end_of_word_suffix: Option<String>,
+
+    words: HashMap<String, u32>,
 }
 
 impl Default for BpeTrainer {
@@ -404,7 +409,11 @@ impl BpeTrainer {
             )
     }
 
-    pub fn train(&self, word_counts: HashMap<String, u32>) -> Result<(BPE, Vec<AddedToken>)> {
+    pub fn do_train(
+        &self,
+        word_counts: &HashMap<String, u32>,
+        model: &mut BPE,
+    ) -> Result<Vec<AddedToken>> {
         let mut word_to_id: HashMap<String, u32> = HashMap::with_capacity(self.vocab_size);
         let mut id_to_word: Vec<String> = Vec::with_capacity(self.vocab_size);
 
@@ -418,14 +427,14 @@ impl BpeTrainer {
         //
         // 2. Compute the initial alphabet
         //
-        self.compute_alphabet(&word_counts, &mut word_to_id, &mut id_to_word);
+        self.compute_alphabet(word_counts, &mut word_to_id, &mut id_to_word);
 
         //
         // 3. Tokenize words
         //
         self.update_progress(&progress, word_counts.len(), "Tokenize words");
         let (words, counts) =
-            self.tokenize_words(&word_counts, &mut word_to_id, &mut id_to_word, &progress);
+            self.tokenize_words(word_counts, &mut word_to_id, &mut id_to_word, &progress);
         self.finalize_progress(&progress, words.len());
 
         //
@@ -551,30 +560,27 @@ impl BpeTrainer {
         }
         self.finalize_progress(&progress, merges.len());
 
-        let mut builder = BPE::builder().vocab_and_merges(
-            word_to_id,
-            merges
-                .into_iter()
-                .map(|((a_id, b_id), _)| {
-                    (
-                        id_to_word[a_id as usize].clone(),
-                        id_to_word[b_id as usize].clone(),
-                    )
-                })
-                .collect(),
-        );
+        // Transfer new vocab & options to model
+        model.vocab = word_to_id;
+        model.vocab_r = model
+            .vocab
+            .iter()
+            .map(|(key, val)| (*val, key.to_owned()))
+            .collect();
+        model.merges = merges
+            .into_iter()
+            .enumerate()
+            .map(|(i, (pair, new_token_id))| (pair, (i as u32, new_token_id)))
+            .collect();
+
         if let Some(prefix) = &self.continuing_subword_prefix {
-            builder = builder.continuing_subword_prefix(prefix.to_owned());
+            model.continuing_subword_prefix = Some(prefix.to_owned());
         }
         if let Some(suffix) = &self.end_of_word_suffix {
-            builder = builder.end_of_word_suffix(suffix.to_owned());
+            model.end_of_word_suffix = Some(suffix.to_owned());
         }
-        Ok((
-            builder
-                .build()
-                .expect("Trainer should know how to build BPE"),
-            self.special_tokens.clone(),
-        ))
+
+        Ok(self.special_tokens.clone())
     }
 }
 
@@ -582,30 +588,50 @@ impl Trainer for BpeTrainer {
     type Model = BPE;
 
     /// Train a BPE model
-    fn train(&self, word_counts: HashMap<String, u32>) -> Result<(BPE, Vec<AddedToken>)> {
-        let (bpe, tokens) = self.train(word_counts)?;
-        Ok((bpe, tokens))
-    }
-
-    /// Process a bunch of tokens, counting them
-    fn process_tokens(&self, words: &mut HashMap<String, u32>, tokens: Vec<String>) {
-        for token in tokens {
-            words
-                .entry(token.clone())
-                .and_modify(|c| *c += 1)
-                .or_insert(1);
-        }
+    fn train(&self, model: &mut BPE) -> Result<Vec<AddedToken>> {
+        self.do_train(&self.words, model)
     }
 
     /// Whether we should show progress
     fn should_show_progress(&self) -> bool {
         self.show_progress
     }
+
+    fn feed<I, S, F>(&mut self, iterator: I, process: F) -> Result<()>
+    where
+        I: Iterator<Item = S> + Send,
+        S: AsRef<str> + Send,
+        F: Fn(&str) -> Result<Vec<String>> + Sync,
+    {
+        let words: Result<HashMap<String, u32>> = iterator
+            .maybe_par_bridge()
+            .map(|sequence| {
+                let words = process(sequence.as_ref())?;
+                let mut map = HashMap::new();
+                for word in words {
+                    map.entry(word).and_modify(|c| *c += 1).or_insert(1);
+                }
+                Ok(map)
+            })
+            .reduce(
+                || Ok(HashMap::new()),
+                |acc, ws| {
+                    let mut acc = acc?;
+                    for (k, v) in ws? {
+                        acc.entry(k).and_modify(|c| *c += v).or_insert(v);
+                    }
+                    Ok(acc)
+                },
+            );
+
+        self.words = words?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{BpeTrainer, Pair};
+    use super::{BpeTrainer, Pair, BPE};
     use std::collections::HashMap;
 
     #[test]
@@ -630,7 +656,8 @@ mod tests {
             .show_progress(false)
             .min_frequency(2)
             .build();
-        let (model, _) = trainer.train(word_counts).unwrap();
+        let mut model = BPE::default();
+        trainer.do_train(&word_counts, &mut model).unwrap();
 
         // Vocab should contain all of the characters from the `word_counts` mapping
         // as well as three merges: 're', 'are', and 'is'.

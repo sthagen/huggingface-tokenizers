@@ -3,6 +3,7 @@ import {
   metaspacePreTokenizer,
   punctuationPreTokenizer,
   sequencePreTokenizer,
+  splitPreTokenizer,
   whitespaceSplitPreTokenizer,
 } from "./pre-tokenizers";
 
@@ -26,11 +27,27 @@ describe("metaspacePreTokenizer", () => {
   it("accepts `undefined` as second parameter", () => {
     expect(metaspacePreTokenizer("t", undefined)).toBeDefined();
   });
+
+  it("can pre-tokenize strings", () => {
+    const pretok = metaspacePreTokenizer();
+    expect(pretok.preTokenizeString("Hello there friend")).toEqual([
+      ["▁Hello", [0, 5]],
+      ["▁there", [5, 11]],
+      ["▁friend", [11, 18]],
+    ]);
+  });
 });
 
 describe("punctuationPreTokenizer", () => {
   it("instantiates correctly without any parameter", () => {
     const processor = punctuationPreTokenizer();
+    expect(processor.constructor.name).toEqual("PreTokenizer");
+  });
+});
+
+describe("splitPreTokenizer", () => {
+  it("instantiates correctly with invert parameter", () => {
+    const processor = splitPreTokenizer(" ", "mergedWithPrevious", false);
     expect(processor.constructor.name).toEqual("PreTokenizer");
   });
 });

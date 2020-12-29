@@ -6,7 +6,7 @@ extras["testing"] = ["pytest"]
 
 setup(
     name="tokenizers",
-    version="0.9.2",
+    version="0.10.0rc1",
     description="Fast and Customizable Tokenizers",
     long_description=open("README.md", "r", encoding="utf-8").read(),
     long_description_content_type="text/markdown",
@@ -41,6 +41,7 @@ setup(
         "tokenizers.processors",
         "tokenizers.trainers",
         "tokenizers.implementations",
+        "tokenizers.tools",
     ],
     package_data={
         "tokenizers": ["py.typed", "__init__.pyi"],
@@ -51,6 +52,7 @@ setup(
         "tokenizers.processors": ["py.typed", "__init__.pyi"],
         "tokenizers.trainers": ["py.typed", "__init__.pyi"],
         "tokenizers.implementations": ["py.typed"],
+        "tokenizers.tools": ["py.typed", "visualizer-styles.css"],
     },
     zip_safe=False,
 )

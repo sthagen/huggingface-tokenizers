@@ -62,3 +62,50 @@ export function bpeTrainer(options?: TrainerOptions): Trainer;
  * @param [options] WordPiece Trainer options
  */
 export function wordPieceTrainer(options?: TrainerOptions): Trainer;
+
+export interface WordLevelTrainerOptions {
+  /**
+   * The minimum frequency a pair should have in order to be merged.
+   * @default 2
+   */
+  minFrequency?: number;
+  /**
+   * Whether to show progress bars while training.
+   * @default true
+   */
+  showProgress?: boolean;
+  /**
+   * A list of special tokens the model should know of.
+   * @default []
+   */
+  specialTokens?: (string | AddedToken)[];
+  /**
+   * The size of the final vocabulary, including all tokens and alphabet.
+   * @default 30000
+   */
+  vocabSize?: number;
+}
+
+/**
+ * Instantiate a new WordLevel Trainer
+ * @param [options] WordLevel Trainer options
+ */
+export function wordLevelTrainer(options?: WordLevelTrainerOptions): Trainer;
+
+export interface UnigramTrainerOptions {
+  vocabSize?: number;
+  nSubIterations?: number;
+  shrinkingFactor?: number;
+  specialTokens?: string[];
+  initialAlphabet?: string[];
+  unkToken?: string;
+  maxPieceLength?: number;
+  seedSize?: number;
+  showProgress?: boolean;
+}
+
+/**
+ * Instantiate a new Unigram Trainer
+ * @param [options] Unigram Trainer options
+ */
+export function unigramTrainer(options?: UnigramTrainerOptions): Trainer;

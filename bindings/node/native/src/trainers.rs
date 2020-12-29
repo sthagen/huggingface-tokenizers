@@ -4,15 +4,25 @@ use crate::extraction::*;
 use crate::models::Model;
 use crate::tokenizer::AddedToken;
 use neon::prelude::*;
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
-use tk::models::{bpe::BpeTrainer, wordpiece::WordPieceTrainer, TrainerWrapper};
+use tk::models::{
+    bpe::BpeTrainer, unigram::UnigramTrainer, wordlevel::WordLevelTrainer,
+    wordpiece::WordPieceTrainer, TrainerWrapper,
+};
 
 /// Trainer
 #[derive(Clone)]
 pub struct Trainer {
-    pub trainer: Option<Arc<TrainerWrapper>>,
+    pub trainer: Option<Arc<RwLock<TrainerWrapper>>>,
+}
+
+impl From<TrainerWrapper> for Trainer {
+    fn from(trainer: TrainerWrapper) -> Self {
+        Self {
+            trainer: Some(Arc::new(RwLock::new(trainer))),
+        }
+    }
 }
 
 impl tk::Trainer for Trainer {
@@ -22,24 +32,42 @@ impl tk::Trainer for Trainer {
         self.trainer
             .as_ref()
             .expect("Uninitialized Trainer")
+            .read()
+            .unwrap()
             .should_show_progress()
     }
 
-    fn train(&self, words: HashMap<String, u32>) -> tk::Result<(Self::Model, Vec<tk::AddedToken>)> {
-        let (model, special_tokens) = self
+    fn train(&self, model: &mut Self::Model) -> tk::Result<Vec<tk::AddedToken>> {
+        let special_tokens = self
             .trainer
             .as_ref()
             .ok_or("Uninitialized Trainer")?
-            .train(words)?;
+            .read()
+            .unwrap()
+            .train(
+                &mut model
+                    .model
+                    .as_ref()
+                    .ok_or("Uninitialized Model")?
+                    .write()
+                    .unwrap(),
+            )?;
 
-        Ok((model.into(), special_tokens))
+        Ok(special_tokens)
     }
 
-    fn process_tokens(&self, words: &mut HashMap<String, u32>, tokens: Vec<String>) {
+    fn feed<I, S, F>(&mut self, iterator: I, process: F) -> tk::Result<()>
+    where
+        I: Iterator<Item = S> + Send,
+        S: AsRef<str> + Send,
+        F: Fn(&str) -> tk::Result<Vec<String>> + Sync,
+    {
         self.trainer
             .as_ref()
-            .expect("Uninitialized Trainer")
-            .process_tokens(words, tokens)
+            .ok_or("Uninitialized Trainer")?
+            .write()
+            .unwrap()
+            .feed(iterator, process)
     }
 }
 
@@ -139,7 +167,7 @@ fn bpe_trainer(mut cx: FunctionContext) -> JsResult<JsTrainer> {
 
     let mut js_trainer = JsTrainer::new::<_, JsTrainer, _>(&mut cx, vec![])?;
     let guard = cx.lock();
-    js_trainer.borrow_mut(&guard).trainer = Some(Arc::new(trainer.into()));
+    js_trainer.borrow_mut(&guard).trainer = Some(Arc::new(RwLock::new(trainer.into())));
 
     Ok(js_trainer)
 }
@@ -231,7 +259,177 @@ fn wordpiece_trainer(mut cx: FunctionContext) -> JsResult<JsTrainer> {
 
     let mut js_trainer = JsTrainer::new::<_, JsTrainer, _>(&mut cx, vec![])?;
     let guard = cx.lock();
-    js_trainer.borrow_mut(&guard).trainer = Some(Arc::new(trainer.into()));
+    js_trainer.borrow_mut(&guard).trainer = Some(Arc::new(RwLock::new(trainer.into())));
+
+    Ok(js_trainer)
+}
+
+// WordLevel
+
+struct WordLevelTrainerOptions(WordLevelTrainer);
+impl From<WordLevelTrainerOptions> for WordLevelTrainer {
+    fn from(v: WordLevelTrainerOptions) -> Self {
+        v.0
+    }
+}
+impl FromJsValue for WordLevelTrainerOptions {
+    fn from_value<'c, C: Context<'c>>(from: Handle<'c, JsValue>, cx: &mut C) -> LibResult<Self> {
+        if let Ok(options) = from.downcast::<JsObject>() {
+            let mut builder = WordLevelTrainer::builder();
+
+            if let Ok(size) = options.get(cx, "vocabSize") {
+                if let Some(size) = Option::from_value(size, cx)? {
+                    builder.vocab_size(size);
+                }
+            }
+            if let Ok(freq) = options.get(cx, "minFrequency") {
+                if let Some(freq) = Option::from_value(freq, cx)? {
+                    builder.min_frequency(freq);
+                }
+            }
+            if let Ok(tokens) = options.get(cx, "specialTokens") {
+                if tokens.downcast::<JsNull>().is_err() && tokens.downcast::<JsUndefined>().is_err()
+                {
+                    builder.special_tokens(
+                        tokens
+                            .downcast::<JsArray>()
+                            .map_err(|e| Error(format!("{}", e)))?
+                            .to_vec(cx)?
+                            .into_iter()
+                            .map(|token| Ok(AddedToken::from_value(token, cx)?.into()))
+                            .collect::<Result<Vec<_>, Error>>()?,
+                    );
+                }
+            }
+            if let Ok(show) = options.get(cx, "showProgress") {
+                if let Some(show) = Option::from_value(show, cx)? {
+                    builder.show_progress(show);
+                }
+            }
+
+            Ok(Self(
+                builder
+                    .build()
+                    .expect("WordLevelTrainerBuilder cannot fail"),
+            ))
+        } else {
+            Err(Error("Expected options type: object".into()))
+        }
+    }
+}
+
+/// wordlevel_trainer(options?: {
+///   vocabSize?: number = 30000,
+///   minFrequency?: number = 0,
+///   specialTokens?: string[] = [],
+///   showProgress?: bool = true,
+/// })
+fn wordlevel_trainer(mut cx: FunctionContext) -> JsResult<JsTrainer> {
+    let trainer = cx.extract_opt::<WordLevelTrainerOptions>(0)?.map_or_else(
+        || WordLevelTrainer::builder().build().unwrap(),
+        |o| o.into(),
+    );
+
+    let mut js_trainer = JsTrainer::new::<_, JsTrainer, _>(&mut cx, vec![])?;
+    let guard = cx.lock();
+    js_trainer.borrow_mut(&guard).trainer = Some(Arc::new(RwLock::new(trainer.into())));
+
+    Ok(js_trainer)
+}
+
+// Unigram
+
+struct UnigramTrainerOptions(UnigramTrainer);
+impl From<UnigramTrainerOptions> for UnigramTrainer {
+    fn from(v: UnigramTrainerOptions) -> Self {
+        v.0
+    }
+}
+impl FromJsValue for UnigramTrainerOptions {
+    fn from_value<'c, C: Context<'c>>(from: Handle<'c, JsValue>, cx: &mut C) -> LibResult<Self> {
+        if let Ok(options) = from.downcast::<JsObject>() {
+            let mut builder = UnigramTrainer::builder();
+
+            if let Ok(size) = options.get(cx, "vocabSize") {
+                if let Some(size) = Option::from_value(size, cx)? {
+                    builder.vocab_size(size);
+                }
+            }
+            if let Ok(nsub) = options.get(cx, "nSubIterations") {
+                if let Some(nsub) = Option::from_value(nsub, cx)? {
+                    builder.n_sub_iterations(nsub);
+                }
+            }
+            if let Ok(factor) = options.get(cx, "shrinkingFactor") {
+                if let Some(factor) = Option::from_value(factor, cx)? {
+                    builder.shrinking_factor(factor);
+                }
+            }
+            if let Ok(tokens) = options.get(cx, "specialTokens") {
+                if tokens.downcast::<JsNull>().is_err() && tokens.downcast::<JsUndefined>().is_err()
+                {
+                    builder.special_tokens(
+                        tokens
+                            .downcast::<JsArray>()
+                            .map_err(|e| Error(format!("{}", e)))?
+                            .to_vec(cx)?
+                            .into_iter()
+                            .map(|token| Ok(AddedToken::from_value(token, cx)?.into()))
+                            .collect::<Result<Vec<_>, Error>>()?,
+                    );
+                }
+            }
+            if let Ok(alphabet) = options.get(cx, "initialAlphabet") {
+                if let Some(alphabet) = Option::from_value(alphabet, cx)? {
+                    builder.initial_alphabet(alphabet);
+                }
+            }
+            if let Ok(unk) = options.get(cx, "unkToken") {
+                let unk = Option::from_value(unk, cx)?;
+                builder.unk_token(unk);
+            }
+            if let Ok(max) = options.get(cx, "maxPieceLength") {
+                if let Some(max) = Option::from_value(max, cx)? {
+                    builder.max_piece_length(max);
+                }
+            }
+            if let Ok(size) = options.get(cx, "seedSize") {
+                if let Some(size) = Option::from_value(size, cx)? {
+                    builder.seed_size(size);
+                }
+            }
+            if let Ok(show) = options.get(cx, "showProgress") {
+                if let Some(show) = Option::from_value(show, cx)? {
+                    builder.show_progress(show);
+                }
+            }
+
+            Ok(Self(builder.build()?))
+        } else {
+            Err(Error("Expected options type: object".into()))
+        }
+    }
+}
+
+/// unigram_trainer(options?: {
+///  vocabSize?: number = 8000,
+///  nSubIterations?: number = 2,
+///  shrinkingFactor?: number = 0.75,
+///  specialTokens?: string[] = [],
+///  initialAlphabet?: string[] = [],
+///  unkToken?: string = undefined,
+///  maxPieceLength?: number = 16,
+///  seedSize?: number = 1000000,
+///  showProgress?: boolean = true,
+/// })
+fn unigram_trainer(mut cx: FunctionContext) -> JsResult<JsTrainer> {
+    let trainer = cx
+        .extract_opt::<UnigramTrainerOptions>(0)?
+        .map_or_else(|| UnigramTrainer::builder().build().unwrap(), |o| o.into());
+
+    let mut js_trainer = JsTrainer::new::<_, JsTrainer, _>(&mut cx, vec![])?;
+    let guard = cx.lock();
+    js_trainer.borrow_mut(&guard).trainer = Some(Arc::new(RwLock::new(trainer.into())));
 
     Ok(js_trainer)
 }
@@ -240,5 +438,7 @@ fn wordpiece_trainer(mut cx: FunctionContext) -> JsResult<JsTrainer> {
 pub fn register(m: &mut ModuleContext, prefix: &str) -> NeonResult<()> {
     m.export_function(&format!("{}_BPETrainer", prefix), bpe_trainer)?;
     m.export_function(&format!("{}_WordPieceTrainer", prefix), wordpiece_trainer)?;
+    m.export_function(&format!("{}_WordLevelTrainer", prefix), wordlevel_trainer)?;
+    m.export_function(&format!("{}_UnigramTrainer", prefix), unigram_trainer)?;
     Ok(())
 }

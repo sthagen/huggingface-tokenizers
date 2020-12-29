@@ -45,12 +45,13 @@ lazy_static! {
 /// of all the required processing steps to transform a UTF-8 string as needed before and after the
 /// BPE model does its job.
 #[serde(tag = "type")]
+#[non_exhaustive]
 pub struct ByteLevel {
     /// Whether to add a leading space to the first word. This allows to treat the leading word
     /// just as any other word.
-    add_prefix_space: bool,
+    pub add_prefix_space: bool,
     /// Whether the post processing step should trim offsets to avoid including whitespaces.
-    trim_offsets: bool,
+    pub trim_offsets: bool,
 }
 impl Default for ByteLevel {
     fn default() -> Self {
@@ -202,11 +203,12 @@ pub fn process_offsets(encoding: &mut Encoding, add_prefix_space: bool) {
 
 #[cfg(test)]
 mod tests {
-    use super::ByteLevel;
+    use super::*;
     use crate::tokenizer::{
         Decoder, Encoding, OffsetReferential, OffsetType, PostProcessor, PreTokenizedString,
         PreTokenizer,
     };
+    use std::iter::FromIterator;
 
     #[test]
     fn pre_tokenization() {
@@ -384,7 +386,7 @@ mod tests {
     #[test]
     fn processor_trims_offsets() {
         let start = Encoding::new(
-            vec![],
+            vec![0; 5],
             vec![],
             vec![
                 "Ġ".into(),
@@ -398,9 +400,10 @@ mod tests {
             vec![],
             vec![],
             vec![],
+            HashMap::new(),
         );
         let expected = Encoding::new(
-            vec![],
+            vec![0; 5],
             vec![],
             vec![
                 "Ġ".into(),
@@ -414,6 +417,7 @@ mod tests {
             vec![],
             vec![],
             vec![],
+            HashMap::new(),
         );
 
         let bytelevel = ByteLevel::default().trim_offsets(true);
@@ -422,7 +426,23 @@ mod tests {
             bytelevel.process(start.clone(), None, false).unwrap()
         );
 
-        let mut pair_expected = expected.clone();
+        let mut pair_expected = Encoding::new(
+            vec![0; 5],
+            vec![],
+            vec![
+                "Ġ".into(),
+                "ĠĠĠĠHelloĠĠ".into(),
+                "ĠĠHello".into(),
+                "HelloĠĠ".into(),
+                "ĠĠĠĠ".into(),
+            ],
+            vec![],
+            vec![(0, 0), (4, 9), (13, 18), (18, 23), (29, 29)],
+            vec![],
+            vec![],
+            vec![],
+            HashMap::from_iter(vec![(0, 0..5), (1, 5..10)]),
+        );
         pair_expected.merge_with(expected, false);
         assert_eq!(
             pair_expected,

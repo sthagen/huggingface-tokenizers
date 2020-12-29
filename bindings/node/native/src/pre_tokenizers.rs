@@ -5,8 +5,37 @@ use neon::prelude::*;
 use std::sync::Arc;
 
 use serde::{ser::SerializeStruct, Serialize, Serializer};
+use tk::normalizer::SplitDelimiterBehavior;
 use tk::pre_tokenizers::PreTokenizerWrapper;
 use tk::PreTokenizedString;
+
+#[derive(Clone)]
+struct JsSplitDelimiterBehavior(SplitDelimiterBehavior);
+
+impl FromJsValue for JsSplitDelimiterBehavior {
+    fn from_value<'c, C: Context<'c>>(from: Handle<'c, JsValue>, _cx: &mut C) -> LibResult<Self> {
+        let s = from.downcast::<JsString>()?.value();
+
+        Ok(Self(match s.as_ref() {
+            "removed" => Ok(SplitDelimiterBehavior::Removed),
+            "isolated" => Ok(SplitDelimiterBehavior::Isolated),
+            "mergedWithPrevious" => Ok(SplitDelimiterBehavior::MergedWithPrevious),
+            "mergedWithNext" => Ok(SplitDelimiterBehavior::MergedWithNext),
+            "contiguous" => Ok(SplitDelimiterBehavior::Contiguous),
+            _ => Err(Error(
+                "Wrong value for SplitDelimiterBehavior, expected one of: \
+                 `removed, isolated, mergedWithPrevious, mergedWithNext, contiguous`"
+                    .into(),
+            )),
+        }?))
+    }
+}
+
+impl<'s> From<JsSplitDelimiterBehavior> for SplitDelimiterBehavior {
+    fn from(v: JsSplitDelimiterBehavior) -> Self {
+        v.0
+    }
+}
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(untagged)]
@@ -71,6 +100,28 @@ declare_types! {
             // This should not be called from JS
             Ok(PreTokenizer { pretok: None })
         }
+
+        method preTokenizeString(mut cx) {
+            use tk::PreTokenizer;
+
+            let sequence = cx.extract::<String>(0)?;
+            let mut pretokenized = PreTokenizedString::from(sequence);
+
+            let this = cx.this();
+            let guard = cx.lock();
+
+            this.borrow(&guard)
+                .pre_tokenize(&mut pretokenized)
+                .map_err(|e| Error(format!("{}", e)))?;
+
+            let splits = pretokenized
+                .get_splits(tk::OffsetReferential::Original, tk::OffsetType::Char)
+                .into_iter()
+                .map(|(s, o, _)| (s.to_owned(), o))
+                .collect::<Vec<_>>();
+
+            Ok(neon_serde::to_value(&mut cx, &splits)?.upcast())
+        }
     }
 }
 
@@ -134,6 +185,22 @@ fn metaspace(mut cx: FunctionContext) -> JsResult<JsPreTokenizer> {
     Ok(pretok)
 }
 
+/// split(invert: bool = false)
+fn split(mut cx: FunctionContext) -> JsResult<JsPreTokenizer> {
+    let pattern: String = cx.extract::<String>(0)?;
+    let behavior: JsSplitDelimiterBehavior = cx.extract::<JsSplitDelimiterBehavior>(1)?;
+    let invert: bool = cx.extract_opt::<bool>(2)?.unwrap_or(false);
+
+    let mut pretok = JsPreTokenizer::new::<_, JsPreTokenizer, _>(&mut cx, vec![])?;
+    let guard = cx.lock();
+    pretok.borrow_mut(&guard).pretok = Some(
+        tk::pre_tokenizers::split::Split::new(pattern, behavior.into(), invert)
+            .map_err(|e| Error(e.to_string()))?
+            .into(),
+    );
+    Ok(pretok)
+}
+
 /// punctuation()
 fn punctuation(mut cx: FunctionContext) -> JsResult<JsPreTokenizer> {
     let mut pretok = JsPreTokenizer::new::<_, JsPreTokenizer, _>(&mut cx, vec![])?;
@@ -186,6 +253,18 @@ fn char_delimiter_split(mut cx: FunctionContext) -> JsResult<JsPreTokenizer> {
     Ok(pretok)
 }
 
+/// digits(individualDigits: bool)
+fn digits(mut cx: FunctionContext) -> JsResult<JsPreTokenizer> {
+    let individual_digits = cx.extract_opt::<bool>(0)?.unwrap_or(false);
+
+    let mut pretok = JsPreTokenizer::new::<_, JsPreTokenizer, _>(&mut cx, vec![])?;
+    let guard = cx.lock();
+    pretok.borrow_mut(&guard).pretok =
+        Some(tk::pre_tokenizers::digits::Digits::new(individual_digits).into());
+
+    Ok(pretok)
+}
+
 /// Register everything here
 pub fn register(m: &mut ModuleContext, prefix: &str) -> NeonResult<()> {
     m.export_function(&format!("{}_ByteLevel", prefix), byte_level)?;
@@ -197,12 +276,14 @@ pub fn register(m: &mut ModuleContext, prefix: &str) -> NeonResult<()> {
     m.export_function(&format!("{}_WhitespaceSplit", prefix), whitespace_split)?;
     m.export_function(&format!("{}_BertPreTokenizer", prefix), bert_pre_tokenizer)?;
     m.export_function(&format!("{}_Metaspace", prefix), metaspace)?;
+    m.export_function(&format!("{}_Split", prefix), split)?;
     m.export_function(
         &format!("{}_CharDelimiterSplit", prefix),
         char_delimiter_split,
     )?;
     m.export_function(&format!("{}_Punctuation", prefix), punctuation)?;
     m.export_function(&format!("{}_Sequence", prefix), sequence)?;
+    m.export_function(&format!("{}_Digits", prefix), digits)?;
     Ok(())
 }
 

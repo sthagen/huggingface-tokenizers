@@ -7,7 +7,7 @@ use std::path::Path;
 use tokenizers::models::unigram::Lattice;
 use tokenizers::models::unigram::Unigram;
 use tokenizers::models::unigram::UnigramTrainer;
-use tokenizers::tokenizer::{Model, Trainer};
+use tokenizers::tokenizer::Model;
 
 #[test]
 fn test_unigram_from_file() {
@@ -52,9 +52,16 @@ fn test_train_unigram_from_file() {
 
     let trainer = UnigramTrainer::builder()
         .show_progress(false)
+        .unk_token(Some("<UNK>".into()))
         .build()
         .unwrap();
-    let (model, _) = trainer.train(word_counts).unwrap();
+    let mut model = Unigram::default();
+
+    let sentences: Vec<_> = word_counts
+        .iter()
+        .map(|(s, i)| (s.to_owned(), *i))
+        .collect();
+    trainer.do_train(sentences, &mut model).unwrap();
     assert_eq!(model.get_vocab_size(), 719);
 }
 

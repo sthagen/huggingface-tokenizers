@@ -44,6 +44,7 @@ fn trainers(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<trainers::PyTrainer>()?;
     m.add_class::<trainers::PyBpeTrainer>()?;
     m.add_class::<trainers::PyWordPieceTrainer>()?;
+    m.add_class::<trainers::PyWordLevelTrainer>()?;
     m.add_class::<trainers::PyUnigramTrainer>()?;
     Ok(())
 }
@@ -66,6 +67,7 @@ fn pre_tokenizers(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<pre_tokenizers::PyByteLevel>()?;
     m.add_class::<pre_tokenizers::PyWhitespace>()?;
     m.add_class::<pre_tokenizers::PyWhitespaceSplit>()?;
+    m.add_class::<pre_tokenizers::PySplit>()?;
     m.add_class::<pre_tokenizers::PyBertPreTokenizer>()?;
     m.add_class::<pre_tokenizers::PyMetaspace>()?;
     m.add_class::<pre_tokenizers::PyCharDelimiterSplit>()?;

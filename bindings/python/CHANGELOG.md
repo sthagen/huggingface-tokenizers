@@ -4,15 +4,57 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0rc1]
+
+### Added
+- [#508]: Add a Visualizer for notebooks to help understand how the tokenizers work
+- [#519]: Add a `WordLevelTrainer` used to train a `WordLevel` model
+- [#533]: Add support for conda builds
+- [#542]: Add Split pre-tokenizer to easily split using a pattern
+- [#544]: Ability to train from memory. This also improves the integration with `datasets`
+
+### Changed
+- [#509]: Automatically stubbing the `.pyi` files
+- [#519]: Each `Model` can return its associated `Trainer` with `get_trainer()`
+- [#530]: The various attributes on each component can be get/set (ie.
+`tokenizer.model.dropout = 0.1`)
+- [#538]: The API Reference has been improved and is now up-to-date.
+
+## Fixed
+- [#519]: During training, the `Model` is now trained in-place. This fixes several bugs that were
+forcing to reload the `Model` after a training.
+- [#539]: Fix `BaseTokenizer` enable_truncation docstring
+
+## [0.9.4]
+
+### Fixed
+- [#492]: Fix `from_file` on `BertWordPieceTokenizer`
+- [#498]: Fix the link to download `sentencepiece_model_pb2.py`
+- [#500]: Fix a typo in the docs quicktour
+
+### Changed
+- [#506]: Improve Encoding mappings for pairs of sequence
+
+## [0.9.3]
+
+### Fixed
+- [#470]: Fix hanging error when training with custom component
+- [#476]: TemplateProcessing serialization is now deterministic
+- [#481]: Fix SentencePieceBPETokenizer.from_files
+
+### Added
+- [#477]: UnicodeScripts PreTokenizer to avoid merges between various scripts
+- [#480]: Unigram now accepts an `initial_alphabet` and handles `special_tokens` correctly
+
 ## [0.9.2]
 
 ### Fixed
-- [#464] Fix a problem with RobertaProcessing being deserialized as BertProcessing
+- [#464]: Fix a problem with RobertaProcessing being deserialized as BertProcessing
 
 ## [0.9.1]
 
 ### Fixed
-- [#459] Fix a problem with deserialization
+- [#459]: Fix a problem with deserialization
 
 ## [0.9.0]
 
@@ -248,6 +290,25 @@ delimiter (Works like `.split(delimiter)`)
 - Fix a bug with the IDs associated with added tokens.
 - Fix a bug that was causing crashes in Python 3.5
 
+
+[#544]: https://github.com/huggingface/tokenizers/pull/544
+[#542]: https://github.com/huggingface/tokenizers/pull/542
+[#539]: https://github.com/huggingface/tokenizers/pull/539
+[#538]: https://github.com/huggingface/tokenizers/pull/538
+[#533]: https://github.com/huggingface/tokenizers/pull/533
+[#530]: https://github.com/huggingface/tokenizers/pull/530
+[#519]: https://github.com/huggingface/tokenizers/pull/519
+[#509]: https://github.com/huggingface/tokenizers/pull/509
+[#508]: https://github.com/huggingface/tokenizers/pull/508
+[#506]: https://github.com/huggingface/tokenizers/pull/506
+[#500]: https://github.com/huggingface/tokenizers/pull/500
+[#498]: https://github.com/huggingface/tokenizers/pull/498
+[#492]: https://github.com/huggingface/tokenizers/pull/492
+[#481]: https://github.com/huggingface/tokenizers/pull/481
+[#480]: https://github.com/huggingface/tokenizers/pull/480
+[#477]: https://github.com/huggingface/tokenizers/pull/477
+[#476]: https://github.com/huggingface/tokenizers/pull/476
+[#470]: https://github.com/huggingface/tokenizers/pull/470
 [#464]: https://github.com/huggingface/tokenizers/pull/464
 [#459]: https://github.com/huggingface/tokenizers/pull/459
 [#420]: https://github.com/huggingface/tokenizers/pull/420

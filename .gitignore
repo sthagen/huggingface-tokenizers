@@ -4,18 +4,20 @@
 .vim
 .env
 target
-
+.idea
 Cargo.lock
 
 /data
 tokenizers/data
 bindings/python/tests/data
-/docs
+docs/build/
+docs/make.bat
 
 __pycache__
 pip-wheel-metadata
 *.egg-info
 *.so
+/bindings/python/examples/.ipynb_checkpoints
 /bindings/python/build
 /bindings/python/dist
 
