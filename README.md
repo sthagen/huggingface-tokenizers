@@ -8,7 +8,6 @@
     <a href="https://github.com/huggingface/tokenizers/blob/master/LICENSE">
         <img alt="GitHub" src="https://img.shields.io/github/license/huggingface/tokenizers.svg?color=blue&cachedrop">
     </a>
-    </a>
     <a href="https://pepy.tech/project/tokenizers/week">
         <img src="https://pepy.tech/badge/tokenizers/week" />
     </a>
@@ -60,7 +59,7 @@ Then training your tokenizer on a set of files just takes two lines of codes:
 from tokenizers.trainers import BpeTrainer
 
 trainer = BpeTrainer(special_tokens=["[UNK]", "[CLS]", "[SEP]", "[PAD]", "[MASK]"])
-tokenizer.train(trainer, ["wiki.train.raw", "wiki.valid.raw", "wiki.test.raw"])
+tokenizer.train(files=["wiki.train.raw", "wiki.valid.raw", "wiki.test.raw"], trainer=trainer)
 ```
 
 Once your tokenizer is trained, encode any text with just one line:
@@ -70,10 +69,6 @@ print(output.tokens)
 # ["Hello", ",", "y", "'", "all", "!", "How", "are", "you", "[UNK]", "?"]
 ```
 
-Check the [python documentation](https://huggingface.co/docs/tokenizers/python/latest) or the 
-[python quicktour](https://huggingface.co/docs/tokenizers/python/latest/quicktour.html) to learn more!
- 
-## Contributors
-  
-[![](https://sourcerer.io/fame/clmnt/huggingface/tokenizers/images/0)](https://sourcerer.io/fame/clmnt/huggingface/tokenizers/links/0)[![](https://sourcerer.io/fame/clmnt/huggingface/tokenizers/images/1)](https://sourcerer.io/fame/clmnt/huggingface/tokenizers/links/1)[![](https://sourcerer.io/fame/clmnt/huggingface/tokenizers/images/2)](https://sourcerer.io/fame/clmnt/huggingface/tokenizers/links/2)[![](https://sourcerer.io/fame/clmnt/huggingface/tokenizers/images/3)](https://sourcerer.io/fame/clmnt/huggingface/tokenizers/links/3)[![](https://sourcerer.io/fame/clmnt/huggingface/tokenizers/images/4)](https://sourcerer.io/fame/clmnt/huggingface/tokenizers/links/4)[![](https://sourcerer.io/fame/clmnt/huggingface/tokenizers/images/5)](https://sourcerer.io/fame/clmnt/huggingface/tokenizers/links/5)[![](https://sourcerer.io/fame/clmnt/huggingface/tokenizers/images/6)](https://sourcerer.io/fame/clmnt/huggingface/tokenizers/links/6)[![](https://sourcerer.io/fame/clmnt/huggingface/tokenizers/images/7)](https://sourcerer.io/fame/clmnt/huggingface/tokenizers/links/7)
-
+Check the [python documentation](https://huggingface.co/docs/tokenizers/python/latest) or the
+[python quicktour](https://huggingface.co/docs/tokenizers/python/latest/quicktour.html) to learn
+more!
