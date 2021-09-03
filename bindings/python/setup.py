@@ -2,7 +2,8 @@ from setuptools import setup
 from setuptools_rust import Binding, RustExtension
 
 extras = {}
-extras["testing"] = ["pytest"]
+extras["testing"] = ["pytest", "requests", "numpy", "datasets"]
+extras["docs"] = ["sphinx", "sphinx_rtd_theme", "setuptools_rust"]
 
 setup(
     name="tokenizers",
