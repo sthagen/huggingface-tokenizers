@@ -71,7 +71,7 @@ declare_types! {
             let content = cx.extract::<String>(0)?;
             let special = cx.extract::<bool>(1)?;
             let token = cx.extract_opt::<AddedTokenOptions>(2)?
-                .unwrap_or_else(AddedTokenOptions::default)
+                .unwrap_or_default()
                 .into_added_token(content, special);
 
             Ok(AddedToken { token })
@@ -260,6 +260,13 @@ pub enum TruncationStrategyDef {
 }
 
 #[derive(Serialize, Deserialize)]
+#[serde(remote = "tk::TruncationDirection", rename_all = "camelCase")]
+pub enum TruncationDirectionDef {
+    Left,
+    Right,
+}
+
+#[derive(Serialize, Deserialize)]
 #[serde(
     remote = "tk::TruncationParams",
     rename_all = "camelCase",
@@ -269,6 +276,8 @@ pub struct TruncationParamsDef {
     max_length: usize,
     #[serde(with = "TruncationStrategyDef")]
     strategy: tk::TruncationStrategy,
+    #[serde(with = "TruncationDirectionDef")]
+    direction: tk::TruncationDirection,
     stride: usize,
 }
 
@@ -1034,7 +1043,7 @@ pub fn tokenizer_from_pretrained(mut cx: FunctionContext) -> JsResult<JsTokenize
     let s = cx.extract::<String>(0)?;
     let mut p: tk::FromPretrainedParameters = cx
         .extract_opt::<FromPretrainedParametersJs>(1)?
-        .unwrap_or_else(FromPretrainedParametersJs::default)
+        .unwrap_or_default()
         .into();
 
     p.user_agent = [("bindings", "Node.js"), ("version", crate::VERSION)]

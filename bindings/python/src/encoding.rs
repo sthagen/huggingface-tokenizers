@@ -3,6 +3,7 @@ use pyo3::prelude::*;
 use pyo3::types::*;
 use pyo3::{PyObjectProtocol, PySequenceProtocol};
 use tk::tokenizer::{Offsets, PaddingDirection};
+use tk::utils::truncation::TruncationDirection;
 use tokenizers as tk;
 
 use crate::error::{deprecation_warning, PyError};
@@ -51,7 +52,7 @@ impl PyEncoding {
         let data = serde_json::to_string(&self.encoding).map_err(|e| {
             exceptions::PyException::new_err(format!(
                 "Error while attempting to pickle Encoding: {}",
-                e.to_string()
+                e
             ))
         })?;
         Ok(PyBytes::new(py, data.as_bytes()).to_object(py))
@@ -63,7 +64,7 @@ impl PyEncoding {
                 self.encoding = serde_json::from_slice(s.as_bytes()).map_err(|e| {
                     exceptions::PyException::new_err(format!(
                         "Error while attempting to unpickle Encoding: {}",
-                        e.to_string()
+                        e
                     ))
                 })?;
                 Ok(())
@@ -439,9 +440,24 @@ impl PyEncoding {
     ///
     ///     stride (:obj:`int`, defaults to :obj:`0`):
     ///         The length of previous content to be included in each overflowing piece
+    ///
+    ///     direction (:obj:`str`, defaults to :obj:`right`):
+    ///         Truncate direction
     #[args(stride = "0")]
-    #[text_signature = "(self, max_length, stride=0)"]
-    fn truncate(&mut self, max_length: usize, stride: usize) {
-        self.encoding.truncate(max_length, stride);
+    #[args(direction = "\"right\"")]
+    #[text_signature = "(self, max_length, stride=0, direction='right')"]
+    fn truncate(&mut self, max_length: usize, stride: usize, direction: &str) -> PyResult<()> {
+        let tdir = match direction {
+            "left" => Ok(TruncationDirection::Left),
+            "right" => Ok(TruncationDirection::Right),
+            _ => Err(PyError(format!(
+                "Invalid truncation direction value : {}",
+                direction
+            ))
+            .into_pyerr::<exceptions::PyValueError>()),
+        }?;
+
+        self.encoding.truncate(max_length, stride, tdir);
+        Ok(())
     }
 }

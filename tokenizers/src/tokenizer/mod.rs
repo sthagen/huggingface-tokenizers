@@ -22,7 +22,6 @@ use std::{
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-use crate::utils::from_pretrained::{from_pretrained, FromPretrainedParameters};
 use crate::utils::iter::ResultShunt;
 use crate::utils::parallelism::*;
 use crate::utils::progress::{ProgressBar, ProgressStyle};
@@ -43,7 +42,9 @@ pub use crate::processors::PostProcessorWrapper;
 // And some other types
 pub use crate::utils::iter::LinesWithEnding;
 pub use crate::utils::padding::{pad_encodings, PaddingDirection, PaddingParams, PaddingStrategy};
-pub use crate::utils::truncation::{truncate_encodings, TruncationParams, TruncationStrategy};
+pub use crate::utils::truncation::{
+    truncate_encodings, TruncationDirection, TruncationParams, TruncationStrategy,
+};
 pub use added_vocabulary::*;
 pub use encoding::*;
 pub use normalizer::{NormalizedString, OffsetReferential, SplitDelimiterBehavior};
@@ -397,11 +398,12 @@ impl Tokenizer {
         let content = read_to_string(file)?;
         Ok(serde_json::from_str(&content)?)
     }
+    #[cfg(feature = "http")]
     pub fn from_pretrained<S: AsRef<str>>(
         identifier: S,
-        params: Option<FromPretrainedParameters>,
+        params: Option<crate::utils::from_pretrained::FromPretrainedParameters>,
     ) -> Result<Self> {
-        let tokenizer_file = from_pretrained(identifier, params)?;
+        let tokenizer_file = crate::utils::from_pretrained::from_pretrained(identifier, params)?;
         Tokenizer::from_file(tokenizer_file)
     }
 }
@@ -1134,13 +1136,14 @@ where
     PP: DeserializeOwned + PostProcessor,
     D: DeserializeOwned + Decoder,
 {
+    #[cfg(feature = "http")]
     /// Instantiate a new Tokenizer from a file hosted on the Hugging Face Hub.
     /// It expects the `identifier` of a model that includes a `tokenizer.json` file.
     pub fn from_pretrained<S: AsRef<str>>(
         identifier: S,
-        params: Option<FromPretrainedParameters>,
+        params: Option<crate::utils::from_pretrained::FromPretrainedParameters>,
     ) -> Result<Self> {
-        let tokenizer_file = from_pretrained(identifier, params)?;
+        let tokenizer_file = crate::utils::from_pretrained::from_pretrained(identifier, params)?;
         TokenizerImpl::from_file(tokenizer_file)
     }
 }
