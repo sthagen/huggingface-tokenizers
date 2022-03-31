@@ -53,6 +53,15 @@ pub struct ByteLevel {
     pub add_prefix_space: bool,
     /// Whether the post processing step should trim offsets to avoid including whitespaces.
     pub trim_offsets: bool,
+
+    /// Whether to use the standard GPT2 regex for whitespace splitting
+    /// Set it to False if you want to use your own splitting.
+    #[serde(default = "default_true")]
+    pub use_regex: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for ByteLevel {
@@ -60,15 +69,17 @@ impl Default for ByteLevel {
         Self {
             add_prefix_space: true,
             trim_offsets: true,
+            use_regex: true,
         }
     }
 }
 
 impl ByteLevel {
-    pub fn new(add_prefix_space: bool, trim_offsets: bool) -> Self {
+    pub fn new(add_prefix_space: bool, trim_offsets: bool, use_regex: bool) -> Self {
         Self {
             add_prefix_space,
             trim_offsets,
+            use_regex,
         }
     }
 
@@ -87,6 +98,12 @@ impl ByteLevel {
         self.trim_offsets = v;
         self
     }
+
+    #[must_use]
+    pub fn use_regex(mut self, v: bool) -> Self {
+        self.use_regex = v;
+        self
+    }
 }
 
 /// As a `PreTokenizer`, `ByteLevel` is in charge of transforming all the unicode characters into
@@ -99,7 +116,11 @@ impl PreTokenizer for ByteLevel {
             if self.add_prefix_space && !normalized.get().starts_with(' ') {
                 normalized.prepend(" ");
             }
-            normalized.split(re_ref, SplitDelimiterBehavior::Isolated)
+            if self.use_regex {
+                normalized.split(re_ref, SplitDelimiterBehavior::Isolated)
+            } else {
+                Ok(vec![normalized])
+            }
         })?;
         pretokenized.normalize(|normalized| {
             let s = normalized.get();
@@ -124,8 +145,11 @@ impl PreTokenizer for ByteLevel {
 
 /// As a `Decoder`, `ByteLevel` is in charge of converting any byte-level characters to their
 /// unicode counterpart, before merging everything back into a single String.
+/// This decoder will consume the tokens and merge them in one step to alleviate
+/// the fact that single token decoded might be a byte not representable as
+/// as String.
 impl Decoder for ByteLevel {
-    fn decode(&self, tokens: Vec<String>) -> Result<String> {
+    fn decode(&self, tokens: Vec<String>) -> Result<Vec<String>> {
         let toks = tokens
             .into_iter()
             .flat_map(|t| {
@@ -138,8 +162,8 @@ impl Decoder for ByteLevel {
                     })
                     .unwrap_or_else(|| t.as_bytes().to_vec())
             })
-            .collect::<Vec<_>>();
-        Ok(String::from_utf8_lossy(&toks).into_owned())
+            .collect::<Vec<u8>>();
+        Ok(vec![String::from_utf8_lossy(&toks).to_string()])
     }
 }
 
@@ -245,10 +269,24 @@ mod tests {
     }
 
     #[test]
+    fn pre_tokenization_no_regex() {
+        let bytelevel = ByteLevel::default().use_regex(false);
+        let mut pretokenized: PreTokenizedString = "Hello my friend, how is your day going?".into();
+        bytelevel.pre_tokenize(&mut pretokenized).unwrap();
+        assert_eq!(
+            pretokenized
+                .get_splits(OffsetReferential::Original, OffsetType::Byte)
+                .into_iter()
+                .map(|(s, o, _)| (s, o))
+                .collect::<Vec<_>>(),
+            vec![("ĠHelloĠmyĠfriend,ĠhowĠisĠyourĠdayĠgoing?", (0, 39))]
+        );
+    }
+
+    #[test]
     fn decoding() {
         let bytelevel = ByteLevel::default().add_prefix_space(false);
         assert_eq!(
-            "Hello my friend, how is your day going?",
             bytelevel
                 .decode(
                     vec![
@@ -259,7 +297,8 @@ mod tests {
                     .map(|s| s.into())
                     .collect::<Vec<String>>()
                 )
-                .unwrap()
+                .unwrap(),
+            vec!["Hello my friend, how is your day going?"]
         );
     }
 
@@ -311,7 +350,7 @@ mod tests {
                 .iter()
                 .flat_map(|(s, _, _)| s.split("").map(|t| t.into()))
                 .collect::<Vec<_>>();
-            assert_eq!(sample, bytelevel.decode(separated_tokens).unwrap());
+            assert_eq!(sample, bytelevel.decode(separated_tokens).unwrap().join(""));
         }
     }
 
@@ -507,7 +546,30 @@ mod tests {
                     "[PA D]".into()
                 ])
                 .unwrap(),
-            "Hello there dear friend! [PA D]"
+            vec!["Hello there dear friend! [PA D]"]
         );
+    }
+
+    #[test]
+    fn deserialization() {
+        // Before use_regex
+        let byte_level: ByteLevel = serde_json::from_str(
+            r#"{"type": "ByteLevel", "add_prefix_space": true, "trim_offsets": false}"#,
+        )
+        .unwrap();
+        assert!(byte_level.use_regex);
+
+        // Loading works, new future BC test.
+        let byte_level: ByteLevel = serde_json::from_str(
+            r#"{"type": "ByteLevel", "add_prefix_space": true, "trim_offsets": false, "use_regex": true}"#,
+        )
+        .unwrap();
+        assert!(byte_level.use_regex);
+
+        let byte_level: ByteLevel = serde_json::from_str(
+            r#"{"type": "ByteLevel", "add_prefix_space": true, "trim_offsets": false, "use_regex": false}"#,
+        )
+        .unwrap();
+        assert!(!byte_level.use_regex);
     }
 }

@@ -3,6 +3,7 @@ use crate::tokenizer::{AddedToken, Result, Trainer};
 use crate::utils::parallelism::*;
 use crate::utils::progress::{ProgressBar, ProgressStyle};
 use log::debug;
+use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
 use std::convert::TryInto;
@@ -38,7 +39,7 @@ fn to_log_prob(pieces: &mut [SentencePiece]) {
 
 /// A `UnigramTrainer` can train a `Unigram` model from `word_counts`.
 #[non_exhaustive]
-#[derive(Builder, Debug, Clone)]
+#[derive(Builder, Debug, Clone, Serialize, Deserialize)]
 pub struct UnigramTrainer {
     #[builder(default = "true")]
     pub show_progress: bool,
@@ -125,19 +126,7 @@ impl UnigramTrainer {
                 min_score_penalty += min_score_penalty_delta;
             }
         }
-        for (token, score) in model.iter() {
-            if inserted.contains::<str>(token) {
-                continue;
-            }
-            inserted.insert(token.to_string());
-            pieces.push((token.to_string(), if score.is_nan() { 0.0 } else { *score }));
-            if pieces.len() == self.vocab_size as usize {
-                break;
-            }
-        }
-        pieces.sort_by(|(_, a), (_, b)| b.partial_cmp(a).unwrap());
 
-        // Insert the necessary tokens
         let (unk_id, need_add_unk) = if let Some(ref unk) = self.unk_token {
             let unk_id = self.special_tokens.iter().enumerate().find_map(|(i, t)| {
                 if t.content == *unk {
@@ -153,6 +142,26 @@ impl UnigramTrainer {
         } else {
             (None, false)
         };
+
+        let vocab_size_without_special_tokens = if need_add_unk {
+            self.vocab_size as usize - self.special_tokens.len() - 1
+        } else {
+            self.vocab_size as usize - self.special_tokens.len()
+        };
+        for (token, score) in model.iter() {
+            if inserted.contains::<str>(token) {
+                continue;
+            }
+            inserted.insert(token.to_string());
+            pieces.push((token.to_string(), if score.is_nan() { 0.0 } else { *score }));
+
+            if pieces.len() == vocab_size_without_special_tokens {
+                break;
+            }
+        }
+        pieces.sort_by(|(_, a), (_, b)| b.partial_cmp(a).unwrap());
+
+        // Insert the necessary tokens
         let mut special_tokens = self
             .special_tokens
             .iter()

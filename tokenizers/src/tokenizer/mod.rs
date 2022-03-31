@@ -11,7 +11,6 @@
 
 use std::{
     collections::HashMap,
-    fmt,
     fs::{read_to_string, File},
     io::prelude::*,
     io::BufReader,
@@ -120,9 +119,9 @@ impl dyn PostProcessor {
     }
 }
 
-/// A `Decoder` has the responsibility to merge the given `Vec<String>` in a `String`.
+/// A `Decoder` changes the raw tokens into its more readable form.
 pub trait Decoder {
-    fn decode(&self, tokens: Vec<String>) -> Result<String>;
+    fn decode(&self, tokens: Vec<String>) -> Result<Vec<String>>;
 }
 
 /// A `Trainer` has the responsibility to train a model. We feed it with lines/sentences
@@ -240,16 +239,9 @@ where
     }
 }
 
-#[derive(Debug)]
+#[derive(thiserror::Error, Debug)]
+#[error("{0}")]
 pub struct BuilderError(String);
-
-impl std::error::Error for BuilderError {}
-
-impl fmt::Display for BuilderError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
 
 /// Builder for Tokenizer structs.
 ///
@@ -777,7 +769,8 @@ where
             .collect::<Vec<_>>();
 
         if let Some(decoder) = &self.decoder {
-            decoder.decode(tokens)
+            let tokens = decoder.decode(tokens)?;
+            Ok(tokens.join(""))
         } else {
             Ok(tokens.join(" "))
         }
