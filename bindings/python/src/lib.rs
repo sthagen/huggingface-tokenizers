@@ -1,5 +1,7 @@
 #![warn(clippy::all)]
 #![allow(clippy::upper_case_acronyms)]
+// Many false positives with pyo3 it seems &str, and &PyAny get flagged
+#![allow(clippy::borrow_deref_ref)]
 
 extern crate tokenizers as tk;
 
@@ -102,6 +104,7 @@ fn processors(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<processors::PyRobertaProcessing>()?;
     m.add_class::<processors::PyByteLevel>()?;
     m.add_class::<processors::PyTemplateProcessing>()?;
+    m.add_class::<processors::PySequence>()?;
     Ok(())
 }
 
