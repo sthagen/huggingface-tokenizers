@@ -57,6 +57,20 @@ fn byte_level(mut cx: FunctionContext) -> JsResult<JsDecoder> {
     Ok(decoder)
 }
 
+/// replace()
+fn replace(mut cx: FunctionContext) -> JsResult<JsDecoder> {
+    let pattern: String = cx.extract::<String>(0)?;
+    let content: String = cx.extract::<String>(1)?;
+    let mut decoder = JsDecoder::new::<_, JsDecoder, _>(&mut cx, vec![])?;
+    let guard = cx.lock();
+    decoder.borrow_mut(&guard).decoder = Some(Arc::new(
+        tk::normalizers::replace::Replace::new(pattern, content)
+            .map_err(|e| Error(e.to_string()))?
+            .into(),
+    ));
+    Ok(decoder)
+}
+
 /// wordpiece(prefix: String = "##", cleanup: bool)
 fn wordpiece(mut cx: FunctionContext) -> JsResult<JsDecoder> {
     let prefix = cx
@@ -68,6 +82,36 @@ fn wordpiece(mut cx: FunctionContext) -> JsResult<JsDecoder> {
     let guard = cx.lock();
     decoder.borrow_mut(&guard).decoder = Some(Arc::new(
         tk::decoders::wordpiece::WordPiece::new(prefix, cleanup).into(),
+    ));
+    Ok(decoder)
+}
+
+/// byte_fallback()
+fn byte_fallback(mut cx: FunctionContext) -> JsResult<JsDecoder> {
+    let mut decoder = JsDecoder::new::<_, JsDecoder, _>(&mut cx, vec![])?;
+    let guard = cx.lock();
+    decoder.borrow_mut(&guard).decoder = Some(Arc::new(
+        tk::decoders::byte_fallback::ByteFallback::new().into(),
+    ));
+    Ok(decoder)
+}
+
+/// fuse()
+fn fuse(mut cx: FunctionContext) -> JsResult<JsDecoder> {
+    let mut decoder = JsDecoder::new::<_, JsDecoder, _>(&mut cx, vec![])?;
+    let guard = cx.lock();
+    decoder.borrow_mut(&guard).decoder = Some(Arc::new(tk::decoders::fuse::Fuse::new().into()));
+    Ok(decoder)
+}
+
+/// strip()
+fn strip(mut cx: FunctionContext) -> JsResult<JsDecoder> {
+    let left: usize = cx.extract(0)?;
+    let right: usize = cx.extract(1)?;
+    let mut decoder = JsDecoder::new::<_, JsDecoder, _>(&mut cx, vec![])?;
+    let guard = cx.lock();
+    decoder.borrow_mut(&guard).decoder = Some(Arc::new(
+        tk::decoders::strip::Strip::new(left, right).into(),
     ));
     Ok(decoder)
 }
@@ -146,7 +190,11 @@ fn sequence(mut cx: FunctionContext) -> JsResult<JsDecoder> {
 /// Register everything here
 pub fn register(m: &mut ModuleContext, prefix: &str) -> NeonResult<()> {
     m.export_function(&format!("{}_ByteLevel", prefix), byte_level)?;
+    m.export_function(&format!("{}_Replace", prefix), replace)?;
     m.export_function(&format!("{}_WordPiece", prefix), wordpiece)?;
+    m.export_function(&format!("{}_ByteFallback", prefix), byte_fallback)?;
+    m.export_function(&format!("{}_Fuse", prefix), fuse)?;
+    m.export_function(&format!("{}_Strip", prefix), strip)?;
     m.export_function(&format!("{}_Metaspace", prefix), metaspace)?;
     m.export_function(&format!("{}_BPEDecoder", prefix), bpe_decoder)?;
     m.export_function(&format!("{}_CTC", prefix), ctc_decoder)?;

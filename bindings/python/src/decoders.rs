@@ -1,18 +1,23 @@
 use std::sync::{Arc, RwLock};
 
 use crate::utils::PyChar;
+use crate::utils::PyPattern;
 use pyo3::exceptions;
 use pyo3::prelude::*;
 use pyo3::types::*;
 use serde::de::Error;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use tk::decoders::bpe::BPEDecoder;
+use tk::decoders::byte_fallback::ByteFallback;
 use tk::decoders::byte_level::ByteLevel;
 use tk::decoders::ctc::CTC;
+use tk::decoders::fuse::Fuse;
 use tk::decoders::metaspace::Metaspace;
 use tk::decoders::sequence::Sequence;
+use tk::decoders::strip::Strip;
 use tk::decoders::wordpiece::WordPiece;
 use tk::decoders::DecoderWrapper;
+use tk::normalizers::replace::Replace;
 use tk::Decoder;
 use tokenizers as tk;
 
@@ -41,7 +46,13 @@ impl PyDecoder {
             PyDecoderWrapper::Wrapped(inner) => match &*inner.as_ref().read().unwrap() {
                 DecoderWrapper::Metaspace(_) => Py::new(py, (PyMetaspaceDec {}, base))?.into_py(py),
                 DecoderWrapper::WordPiece(_) => Py::new(py, (PyWordPieceDec {}, base))?.into_py(py),
+                DecoderWrapper::ByteFallback(_) => {
+                    Py::new(py, (PyByteFallbackDec {}, base))?.into_py(py)
+                }
+                DecoderWrapper::Strip(_) => Py::new(py, (PyStrip {}, base))?.into_py(py),
+                DecoderWrapper::Fuse(_) => Py::new(py, (PyFuseDec {}, base))?.into_py(py),
                 DecoderWrapper::ByteLevel(_) => Py::new(py, (PyByteLevelDec {}, base))?.into_py(py),
+                DecoderWrapper::Replace(_) => Py::new(py, (PyReplaceDec {}, base))?.into_py(py),
                 DecoderWrapper::BPE(_) => Py::new(py, (PyBPEDecoder {}, base))?.into_py(py),
                 DecoderWrapper::CTC(_) => Py::new(py, (PyCTCDecoder {}, base))?.into_py(py),
                 DecoderWrapper::Sequence(_) => {
@@ -155,6 +166,24 @@ impl PyByteLevelDec {
     }
 }
 
+/// Replace Decoder
+///
+/// This decoder is to be used in tandem with the :class:`~tokenizers.pre_tokenizers.Replace`
+/// :class:`~tokenizers.pre_tokenizers.PreTokenizer`.
+#[pyclass(extends=PyDecoder, module = "tokenizers.decoders", name = "Replace")]
+#[pyo3(text_signature = "(self, pattern, content)")]
+pub struct PyReplaceDec {}
+#[pymethods]
+impl PyReplaceDec {
+    #[new]
+    fn new(pattern: PyPattern, content: String) -> PyResult<(Self, PyDecoder)> {
+        Ok((
+            PyReplaceDec {},
+            ToPyResult(Replace::new(pattern, content)).into_py()?.into(),
+        ))
+    }
+}
+
 /// WordPiece Decoder
 ///
 /// Args:
@@ -193,6 +222,73 @@ impl PyWordPieceDec {
     #[pyo3(signature = (prefix = String::from("##"), cleanup = true))]
     fn new(prefix: String, cleanup: bool) -> (Self, PyDecoder) {
         (PyWordPieceDec {}, WordPiece::new(prefix, cleanup).into())
+    }
+}
+
+/// ByteFallback Decoder
+/// ByteFallback is a simple trick which converts tokens looking like `<0x61>`
+/// to pure bytes, and attempts to make them into a string. If the tokens
+/// cannot be decoded you will get � instead for each inconvertable byte token
+///
+#[pyclass(extends=PyDecoder, module = "tokenizers.decoders", name = "ByteFallback")]
+#[pyo3(text_signature = "(self)")]
+pub struct PyByteFallbackDec {}
+#[pymethods]
+impl PyByteFallbackDec {
+    #[new]
+    #[pyo3(signature = ())]
+    fn new() -> (Self, PyDecoder) {
+        (PyByteFallbackDec {}, ByteFallback::new().into())
+    }
+}
+
+/// Fuse Decoder
+/// Fuse simply fuses every token into a single string.
+/// This is the last step of decoding, this decoder exists only if
+/// there is need to add other decoders *after* the fusion
+#[pyclass(extends=PyDecoder, module = "tokenizers.decoders", name = "Fuse")]
+#[pyo3(text_signature = "(self)")]
+pub struct PyFuseDec {}
+#[pymethods]
+impl PyFuseDec {
+    #[new]
+    #[pyo3(signature = ())]
+    fn new() -> (Self, PyDecoder) {
+        (PyFuseDec {}, Fuse::new().into())
+    }
+}
+
+/// Strip normalizer
+/// Strips n left characters of each token, or n right characters of each token
+#[pyclass(extends=PyDecoder, module = "tokenizers.decoders", name = "Strip")]
+#[pyo3(text_signature = "(self, left=0, right=0)")]
+pub struct PyStrip {}
+#[pymethods]
+impl PyStrip {
+    #[getter]
+    fn get_left(self_: PyRef<Self>) -> usize {
+        getter!(self_, Strip, left)
+    }
+
+    #[setter]
+    fn set_left(self_: PyRef<Self>, left: usize) {
+        setter!(self_, Strip, left, left)
+    }
+
+    #[getter]
+    fn get_right(self_: PyRef<Self>) -> usize {
+        getter!(self_, Strip, right)
+    }
+
+    #[setter]
+    fn set_right(self_: PyRef<Self>, right: usize) {
+        setter!(self_, Strip, right, right)
+    }
+
+    #[new]
+    #[pyo3(signature = (left=0, right=0))]
+    fn new(left: usize, right: usize) -> (Self, PyDecoder) {
+        (PyStrip {}, Strip::new(left, right).into())
     }
 }
 
@@ -452,7 +548,11 @@ impl Decoder for PyDecoderWrapper {
 pub fn decoders(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<PyDecoder>()?;
     m.add_class::<PyByteLevelDec>()?;
+    m.add_class::<PyReplaceDec>()?;
     m.add_class::<PyWordPieceDec>()?;
+    m.add_class::<PyByteFallbackDec>()?;
+    m.add_class::<PyFuseDec>()?;
+    m.add_class::<PyStrip>()?;
     m.add_class::<PyMetaspaceDec>()?;
     m.add_class::<PyBPEDecoder>()?;
     m.add_class::<PyCTCDecoder>()?;
