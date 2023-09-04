@@ -4,6 +4,7 @@ use std::hash::{Hash, Hasher};
 use numpy::{npyffi, PyArray1};
 use pyo3::class::basic::CompareOp;
 use pyo3::exceptions;
+use pyo3::intern;
 use pyo3::prelude::*;
 use pyo3::types::*;
 use pyo3::AsPyPointer;
@@ -56,9 +57,6 @@ use crate::utils::{MaybeSizedIterator, PyBufferedIterator};
 ///         Yesterday"``.
 ///
 #[pyclass(dict, module = "tokenizers", name = "AddedToken")]
-#[pyo3(
-    text_signature = "(self, content, single_word=False, lstrip=False, rstrip=False, normalized=True)"
-)]
 pub struct PyAddedToken {
     pub content: String,
     pub is_special_token: bool,
@@ -128,7 +126,7 @@ impl From<tk::AddedToken> for PyAddedToken {
 #[pymethods]
 impl PyAddedToken {
     #[new]
-    #[pyo3(signature = (content=None, **kwargs))]
+    #[pyo3(signature = (content=None, **kwargs), text_signature = "(self, content, single_word=False, lstrip=False, rstrip=False, normalized=True)")]
     fn __new__(content: Option<&str>, kwargs: Option<&PyDict>) -> PyResult<Self> {
         let mut token = PyAddedToken::from(content.unwrap_or(""), None);
 
@@ -441,7 +439,6 @@ type Tokenizer = TokenizerImpl<PyModel, PyNormalizer, PyPreTokenizer, PyPostProc
 ///         The core algorithm that this :obj:`Tokenizer` should be using.
 ///
 #[pyclass(dict, module = "tokenizers", name = "Tokenizer")]
-#[pyo3(text_signature = "(self, model)")]
 #[derive(Clone)]
 pub struct PyTokenizer {
     tokenizer: Tokenizer,
@@ -460,6 +457,7 @@ impl PyTokenizer {
 #[pymethods]
 impl PyTokenizer {
     #[new]
+    #[pyo3(text_signature = "(self, model)")]
     fn __new__(model: PyRef<PyModel>) -> Self {
         PyTokenizer::from_model(model.clone())
     }
@@ -569,17 +567,23 @@ impl PyTokenizer {
         revision: String,
         auth_token: Option<String>,
     ) -> PyResult<Self> {
-        let params = tk::FromPretrainedParameters {
-            revision,
-            auth_token,
-            user_agent: [("bindings", "Python"), ("version", crate::VERSION)]
-                .iter()
-                .map(|(k, v)| (k.to_string(), v.to_string()))
-                .collect(),
-        };
+        let path = Python::with_gil(|py| -> PyResult<String> {
+            let huggingface_hub = PyModule::import(py, intern!(py, "huggingface_hub"))?;
+            let hf_hub_download = huggingface_hub.getattr(intern!(py, "hf_hub_download"))?;
+            let kwargs = [
+                (intern!(py, "repo_id"), identifier),
+                (intern!(py, "filename"), "tokenizer.json"),
+                (intern!(py, "revision"), &revision),
+            ]
+            .into_py_dict(py);
+            if let Some(auth_token) = auth_token {
+                kwargs.set_item(intern!(py, "token"), auth_token)?;
+            }
+            let path: String = hf_hub_download.call((), Some(kwargs))?.extract()?;
+            Ok(path)
+        })?;
 
-        let tokenizer: PyResult<_> =
-            ToPyResult(Tokenizer::from_pretrained(identifier, Some(params))).into();
+        let tokenizer: PyResult<_> = ToPyResult(Tokenizer::from_file(path)).into();
         Ok(Self::new(tokenizer?))
     }
 
@@ -721,7 +725,9 @@ impl PyTokenizer {
     /// Disable truncation
     #[pyo3(text_signature = "(self)")]
     fn no_truncation(&mut self) {
-        let _ = self.tokenizer.with_truncation(None);
+        self.tokenizer
+            .with_truncation(None)
+            .expect("Failed to set truncation to `None`! This should never happen");
     }
 
     /// Get the currently set truncation parameters
