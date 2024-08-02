@@ -7,6 +7,7 @@ import tiktoken
 from tokenizers import Tokenizer
 from huggingface_hub import hf_hub_download
 from typing import Tuple, List
+from multiprocessing import Process
 
 MODEL_ID = "meta-llama/Meta-Llama-3.1-8B"
 DATASET = "facebook/xnli"
@@ -24,31 +25,31 @@ def format_byte_size(num_bytes: int) -> Tuple[str, str]:
     return f"{num_bytes_f:.2f} PB", "PB"
 
 
-def benchmark_batch(model: str, documents: list[str]) -> None:
-    num_threads = int(os.environ["RAYON_NUM_THREADS"])
+def benchmark_batch(model: str, documents: list[str], num_threads: int, document_length: float) -> None:
+    os.environ["RAYON_NUM_THREADS"] = str(num_threads)
     num_bytes = sum(map(len, map(str.encode, documents)))
     readable_size, unit = format_byte_size(num_bytes)
     print(f"==============")
-    print(f"num_threads: {num_threads}, data size: {readable_size}, documents: {len(documents)}")
+    print(f"num_threads: {num_threads}, data size: {readable_size}, documents: {len(documents)} Avg Length: {document_length:.0f}")
     filename = hf_hub_download(MODEL_ID, "original/tokenizer.model")
     mergeable_ranks = load_tiktoken_bpe(filename)
     pat_str = r"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+"
     num_reserved_special_tokens = 256
     special_tokens = [
-            "<|begin_of_text|>",
-            "<|end_of_text|>",
-            "<|reserved_special_token_0|>",
-            "<|reserved_special_token_1|>",
-            "<|reserved_special_token_2|>",
-            "<|reserved_special_token_3|>",
-            "<|start_header_id|>",
-            "<|end_header_id|>",
-            "<|reserved_special_token_4|>",
-            "<|eot_id|>",  # end of turn
-        ] + [
-            f"<|reserved_special_token_{i}|>"
-            for i in range(5, num_reserved_special_tokens - 5)
-        ]
+        "<|begin_of_text|>",
+        "<|end_of_text|>",
+        "<|reserved_special_token_0|>",
+        "<|reserved_special_token_1|>",
+        "<|reserved_special_token_2|>",
+        "<|reserved_special_token_3|>",
+        "<|start_header_id|>",
+        "<|end_header_id|>",
+        "<|reserved_special_token_4|>",
+        "<|eot_id|>",  # end of turn
+    ] + [
+        f"<|reserved_special_token_{i}|>"
+        for i in range(5, num_reserved_special_tokens - 5)
+    ]
     num_base_tokens = len(mergeable_ranks)
     special_tokens = {
         token: num_base_tokens + i for i, token in enumerate(special_tokens)
@@ -81,21 +82,34 @@ def benchmark_batch(model: str, documents: list[str]) -> None:
 def test(model: str, dataset: str, dataset_config: str, threads: List[int]):
     dataset_xnli = load_dataset(dataset, dataset_config)
 
-    input_lengths = [(10, False), (10_000, False), (10_000, True)]  # Example input lengths
+    # input_lengths = [(10, False), (10_000, False), (10_000, True)]  # Example input lengths
+    input_lengths = [(10_000, False, True), (10_000, False, False)]
 
     for num_threads in threads:
-        os.environ["RAYON_NUM_THREADS"] = str(num_threads)
-        os.environ["TOKENIZER_PARALLELISM"] = str(num_threads)
-        os.environ["RAYON_RS_NUM_THREADS"] = str(num_threads)
-        for length, fuse in input_lengths:
+        for length, fuse, long in input_lengths:
             documents = []
             for i, item in enumerate(dataset_xnli["train"]):
-                documents.append("".join(item["premise"].values()))
                 if i >= length:
                     break
+                if long:
+                    documents.append("".join(item["premise"].values()))
+                else:
+                    documents.append(item["premise"]["en"])
             if fuse:
                 documents=["".join(documents)]
-            benchmark_batch(model, documents)
+
+            document_length = sum(len(d) for d in documents) / len(documents)
+
+            # Rayon thread pool is global to a process, we need to launch
+            # separate processes in order to accurately use the correct number of threads.
+            # Otherwise, we're simply running tokenizers in whatever tests comes first.
+            # tokenizers does NOT provide a method to change the number of threads during
+            # runtime.
+            p = Process(target=benchmark_batch, args=(model, documents, num_threads, document_length))
+            p.start()
+            p.join()
+
+            # benchmark_batch(model, documents, num_threads)
 
 
 def main():
