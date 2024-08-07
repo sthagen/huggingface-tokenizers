@@ -35,8 +35,8 @@ use super::utils::*;
     subclass
 )]
 #[derive(Clone, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct PyPreTokenizer {
-    #[serde(flatten)]
     pub(crate) pretok: PyPreTokenizerTypeWrapper,
 }
 
@@ -181,6 +181,16 @@ impl PyPreTokenizer {
             .map(|(s, o, _)| (s.to_owned(), o))
             .collect())
     }
+
+    fn __repr__(&self) -> PyResult<String> {
+        crate::utils::serde_pyo3::repr(self)
+            .map_err(|e| exceptions::PyException::new_err(e.to_string()))
+    }
+
+    fn __str__(&self) -> PyResult<String> {
+        crate::utils::serde_pyo3::to_string(self)
+            .map_err(|e| exceptions::PyException::new_err(e.to_string()))
+    }
 }
 
 macro_rules! getter {
@@ -324,8 +334,11 @@ impl PyWhitespaceSplit {
 ///
 /// Args:
 ///     pattern (:obj:`str` or :class:`~tokenizers.Regex`):
-///         A pattern used to split the string. Usually a string or a a regex built with `tokenizers.Regex`
-///
+///         A pattern used to split the string. Usually a string or a a regex built with `tokenizers.Regex`.
+///         If you want to use a regex pattern, it has to be wrapped around a `tokenizer.Regex`,
+///         otherwise we consider is as a string pattern. For example `pattern="|"`
+///         means you want to split on `|` (imagine a csv file for example), while
+///         `patter=tokenizer.Regex("1|2")` means you split on either '1' or '2'.
 ///     behavior (:class:`~tokenizers.SplitDelimiterBehavior`):
 ///         The behavior to use when splitting.
 ///         Choices: "removed", "isolated", "merged_with_previous", "merged_with_next",
@@ -449,6 +462,24 @@ impl PySequence {
 
     fn __getnewargs__<'p>(&self, py: Python<'p>) -> Bound<'p, PyTuple> {
         PyTuple::new_bound(py, [PyList::empty_bound(py)])
+    }
+
+    fn __getitem__(self_: PyRef<'_, Self>, py: Python<'_>, index: usize) -> PyResult<Py<PyAny>> {
+        match &self_.as_ref().pretok {
+            PyPreTokenizerTypeWrapper::Sequence(inner) => match inner.get(index) {
+                Some(item) => {
+                    PyPreTokenizer::new(PyPreTokenizerTypeWrapper::Single(Arc::clone(item)))
+                        .get_as_subtype(py)
+                }
+                _ => Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                    "Index not found",
+                )),
+            },
+            PyPreTokenizerTypeWrapper::Single(inner) => {
+                PyPreTokenizer::new(PyPreTokenizerTypeWrapper::Single(Arc::clone(inner)))
+                    .get_as_subtype(py)
+            }
+        }
     }
 }
 
