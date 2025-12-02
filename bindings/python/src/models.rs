@@ -33,25 +33,13 @@ pub struct PyModel {
 }
 
 impl PyModel {
-    pub(crate) fn get_as_subtype(&self, py: Python<'_>) -> PyResult<PyObject> {
+    pub(crate) fn get_as_subtype(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let base = self.clone();
         Ok(match *self.model.as_ref().read().unwrap() {
-            ModelWrapper::BPE(_) => Py::new(py, (PyBPE {}, base))?
-                .into_pyobject(py)?
-                .into_any()
-                .into(),
-            ModelWrapper::WordPiece(_) => Py::new(py, (PyWordPiece {}, base))?
-                .into_pyobject(py)?
-                .into_any()
-                .into(),
-            ModelWrapper::WordLevel(_) => Py::new(py, (PyWordLevel {}, base))?
-                .into_pyobject(py)?
-                .into_any()
-                .into(),
-            ModelWrapper::Unigram(_) => Py::new(py, (PyUnigram {}, base))?
-                .into_pyobject(py)?
-                .into_any()
-                .into(),
+            ModelWrapper::BPE(_) => Py::new(py, (PyBPE {}, base))?.into_any(),
+            ModelWrapper::WordPiece(_) => Py::new(py, (PyWordPiece {}, base))?.into_any(),
+            ModelWrapper::WordLevel(_) => Py::new(py, (PyWordLevel {}, base))?.into_any(),
+            ModelWrapper::Unigram(_) => Py::new(py, (PyUnigram {}, base))?.into_any(),
         })
     }
 }
@@ -102,7 +90,7 @@ where
 #[pymethods]
 impl PyModel {
     #[new]
-    #[pyo3(text_signature = None)]
+    #[pyo3(signature = (), text_signature = "(self)")]
     fn __new__() -> Self {
         // Instantiate a default empty model. This doesn't really make sense, but we need
         // to be able to instantiate an empty model for pickle capabilities.
@@ -111,14 +99,14 @@ impl PyModel {
         }
     }
 
-    fn __getstate__(&self, py: Python) -> PyResult<PyObject> {
+    fn __getstate__(&self, py: Python) -> PyResult<Py<PyAny>> {
         let data = serde_json::to_string(&self.model).map_err(|e| {
             exceptions::PyException::new_err(format!("Error while attempting to pickle Model: {e}"))
         })?;
         Ok(PyBytes::new(py, data.as_bytes()).into())
     }
 
-    fn __setstate__(&mut self, py: Python, state: PyObject) -> PyResult<()> {
+    fn __setstate__(&mut self, py: Python, state: Py<PyAny>) -> PyResult<()> {
         match state.extract::<&[u8]>(py) {
             Ok(s) => {
                 self.model = serde_json::from_slice(s).map_err(|e| {
@@ -226,7 +214,7 @@ impl PyModel {
     /// Returns:
     ///     :class:`~tokenizers.trainers.Trainer`: The Trainer used to train this model
     #[pyo3(text_signature = "(self)")]
-    fn get_trainer(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn get_trainer(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         PyTrainer::from(self.model.read().unwrap().get_trainer()).get_as_subtype(py)
     }
 
@@ -491,7 +479,7 @@ impl PyBPE {
     ///     A :obj:`Tuple` with the vocab and the merges:
     ///         The vocabulary and merges loaded into memory
     #[staticmethod]
-    #[pyo3(text_signature = "(self, vocab, merges)")]
+    #[pyo3(text_signature = "(vocab, merges)")]
     fn read_file(vocab: &str, merges: &str) -> PyResult<(HashMap<String, u32>, Merges)> {
         let (vocab, merges) = BPE::read_file(vocab, merges).map_err(|e| {
             exceptions::PyException::new_err(format!(
@@ -524,7 +512,7 @@ impl PyBPE {
     ///     :class:`~tokenizers.models.BPE`: An instance of BPE loaded from these files
     #[classmethod]
     #[pyo3(signature = (vocab, merges, **kwargs))]
-    #[pyo3(text_signature = "(cls, vocab, merge, **kwargs)")]
+    #[pyo3(text_signature = "(vocab, merges, **kwargs)")]
     fn from_file(
         _cls: &Bound<'_, PyType>,
         py: Python,
@@ -656,7 +644,10 @@ impl PyWordPiece {
     }
 
     #[new]
-    #[pyo3(signature = (vocab=None, **kwargs), text_signature = "(self, vocab, unk_token, max_input_chars_per_word)")]
+    #[pyo3(
+        signature = (vocab=None, **kwargs),
+        text_signature = "(self, vocab=None, unk_token='[UNK]', max_input_chars_per_word=100, continuing_subword_prefix='##')"
+    )]
     fn new(
         py: Python<'_>,
         vocab: Option<PyVocab>,
@@ -769,7 +760,10 @@ impl PyWordLevel {
     }
 
     #[new]
-    #[pyo3(signature = (vocab=None, unk_token = None), text_signature = "(self, vocab, unk_token)")]
+    #[pyo3(
+        signature = (vocab=None, unk_token = None),
+        text_signature = "(self, vocab=None, unk_token=None)"
+    )]
     fn new(
         py: Python<'_>,
         vocab: Option<PyVocab>,
@@ -848,7 +842,7 @@ impl PyWordLevel {
     ///     :class:`~tokenizers.models.WordLevel`: An instance of WordLevel loaded from file
     #[classmethod]
     #[pyo3(signature = (vocab, unk_token = None))]
-    #[pyo3(text_signature = "(vocab, unk_token)")]
+    #[pyo3(text_signature = "(vocab, unk_token=None)")]
     fn from_file(
         _cls: &Bound<'_, PyType>,
         py: Python,
@@ -877,7 +871,7 @@ pub struct PyUnigram {}
 #[pymethods]
 impl PyUnigram {
     #[new]
-    #[pyo3(signature = (vocab=None, unk_id=None, byte_fallback=None), text_signature = "(self, vocab, unk_id, byte_fallback)")]
+    #[pyo3(signature = (vocab=None, unk_id=None, byte_fallback=None), text_signature = "(self, vocab=None, unk_id=None, byte_fallback=None)")]
     fn new(
         vocab: Option<Vec<(String, f64)>>,
         unk_id: Option<usize>,
@@ -945,7 +939,7 @@ mod test {
 
     #[test]
     fn get_subtype() {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let py_model = PyModel::from(BPE::default());
             let py_bpe = py_model.get_as_subtype(py).unwrap();
             assert_eq!("BPE", py_bpe.bind(py).get_type().qualname().unwrap());

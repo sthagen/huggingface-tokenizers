@@ -8,6 +8,7 @@ use pyo3::exceptions;
 use pyo3::exceptions::PyException;
 use pyo3::prelude::*;
 use pyo3::types::*;
+use pyo3::IntoPyObjectExt;
 use serde::ser::SerializeStruct;
 use serde::Deserializer;
 use serde::Serializer;
@@ -52,39 +53,26 @@ impl PyPostProcessor {
         PyPostProcessor { processor }
     }
 
-    pub(crate) fn get_as_subtype(&self, py: Python<'_>) -> PyResult<PyObject> {
+    pub(crate) fn get_as_subtype(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let base = self.clone();
         Ok(
             match self.processor {
-                PyPostProcessorTypeWrapper::Sequence(_) => Py::new(py, (PySequence {}, base))?
-                .into_pyobject(py)?
-                .into_any()
-                .into(),
+                PyPostProcessorTypeWrapper::Sequence(_) => Py::new(py, (PySequence {}, base))?.into_any(),
                 PyPostProcessorTypeWrapper::Single(ref inner) => {
 
             match &*inner.read().map_err(|_| {
                 PyException::new_err("RwLock synchronisation primitive is poisoned, cannot get subtype of PyPostProcessor")
             })? {
                 PostProcessorWrapper::ByteLevel(_) => Py::new(py, (PyByteLevel {}, base))?
-                    .into_pyobject(py)?
-                    .into_any()
-                    .into(),
+                    .into_any(),
                 PostProcessorWrapper::Bert(_) => Py::new(py, (PyBertProcessing {}, base))?
-                    .into_pyobject(py)?
-                    .into_any()
-                    .into(),
+                    .into_any(),
                 PostProcessorWrapper::Roberta(_) => Py::new(py, (PyRobertaProcessing {}, base))?
-                    .into_pyobject(py)?
-                    .into_any()
-                    .into(),
+                    .into_any(),
                 PostProcessorWrapper::Template(_) => Py::new(py, (PyTemplateProcessing {}, base))?
-                    .into_pyobject(py)?
-                    .into_any()
-                    .into(),
+                    .into_any(),
                 PostProcessorWrapper::Sequence(_) => Py::new(py, (PySequence {}, base))?
-                    .into_pyobject(py)?
-                    .into_any()
-                    .into(),
+                    .into_any(),
             }
                 }
             }
@@ -110,7 +98,7 @@ impl PostProcessor for PyPostProcessor {
 
 #[pymethods]
 impl PyPostProcessor {
-    fn __getstate__(&self, py: Python) -> PyResult<PyObject> {
+    fn __getstate__(&self, py: Python) -> PyResult<Py<PyAny>> {
         let data = serde_json::to_string(&self.processor).map_err(|e| {
             exceptions::PyException::new_err(format!(
                 "Error while attempting to pickle PostProcessor: {e}"
@@ -119,7 +107,7 @@ impl PyPostProcessor {
         Ok(PyBytes::new(py, data.as_bytes()).into())
     }
 
-    fn __setstate__(&mut self, py: Python, state: PyObject) -> PyResult<()> {
+    fn __setstate__(&mut self, py: Python, state: Py<PyAny>) -> PyResult<()> {
         match state.extract::<&[u8]>(py) {
             Ok(s) => {
                 self.processor = serde_json::from_slice(s).map_err(|e| {
@@ -346,7 +334,7 @@ impl PyBertProcessing {
         let (tok, id) = getter!(self_, Bert, get_sep_copy());
         PyTuple::new(
             py,
-            Vec::<PyObject>::from([tok.into_pyobject(py)?.into(), id.into_pyobject(py)?.into()]),
+            Vec::<Py<PyAny>>::from([tok.into_py_any(py)?, id.into_py_any(py)?]),
         )
     }
 
@@ -363,7 +351,7 @@ impl PyBertProcessing {
         let (tok, id) = getter!(self_, Bert, get_cls_copy());
         PyTuple::new(
             py,
-            Vec::<PyObject>::from([tok.into_pyobject(py)?.into(), id.into_pyobject(py)?.into()]),
+            Vec::<Py<PyAny>>::from([tok.into_py_any(py)?, id.into_py_any(py)?]),
         )
     }
 
@@ -427,7 +415,7 @@ impl PyRobertaProcessing {
         let (tok, id) = getter!(self_, Roberta, get_sep_copy());
         PyTuple::new(
             py,
-            Vec::<PyObject>::from([tok.into_pyobject(py)?.into(), id.into_pyobject(py)?.into()]),
+            Vec::<Py<PyAny>>::from([tok.into_py_any(py)?, id.into_py_any(py)?]),
         )
     }
 
@@ -444,7 +432,7 @@ impl PyRobertaProcessing {
         let (tok, id) = getter!(self_, Roberta, get_cls_copy());
         PyTuple::new(
             py,
-            Vec::<PyObject>::from([tok.into_pyobject(py)?.into(), id.into_pyobject(py)?.into()]),
+            Vec::<Py<PyAny>>::from([tok.into_py_any(py)?, id.into_py_any(py)?]),
         )
     }
 
@@ -494,7 +482,10 @@ pub struct PyByteLevel {}
 #[pymethods]
 impl PyByteLevel {
     #[new]
-    #[pyo3(signature = (add_prefix_space = None, trim_offsets = None, use_regex = None, **_kwargs), text_signature = "(self, trim_offsets=True, add_prefix_state=True)")]
+    #[pyo3(
+        signature = (add_prefix_space = None, trim_offsets = None, use_regex = None, **_kwargs),
+        text_signature = "(self, add_prefix_space=None, trim_offsets=None, use_regex=None)"
+    )]
     fn new(
         add_prefix_space: Option<bool>,
         trim_offsets: Option<bool>,
@@ -685,7 +676,10 @@ pub struct PyTemplateProcessing {}
 #[pymethods]
 impl PyTemplateProcessing {
     #[new]
-    #[pyo3(signature = (single = None, pair = None, special_tokens = None), text_signature = "(self, single, pair, special_tokens)")]
+    #[pyo3(
+        signature = (single = None, pair = None, special_tokens = None),
+        text_signature = "(self, single=None, pair=None, special_tokens=None)"
+    )]
     fn new(
         single: Option<PyTemplate>,
         pair: Option<PyTemplate>,
@@ -835,7 +829,7 @@ mod test {
 
     #[test]
     fn get_subtype() {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let py_proc = PyPostProcessor::new(PyPostProcessorTypeWrapper::Single(Arc::new(
                 RwLock::new(BertProcessing::new(("SEP".into(), 0), ("CLS".into(), 1)).into()),
             )));

@@ -28,9 +28,7 @@ impl Pattern for PyPattern {
                     s.find_matches(inside)
                 }
             }
-            PyPattern::Regex(r) => {
-                Python::with_gil(|py| (&r.borrow(py).inner).find_matches(inside))
-            }
+            PyPattern::Regex(r) => Python::attach(|py| (&r.borrow(py).inner).find_matches(inside)),
         }
     }
 }
@@ -39,7 +37,7 @@ impl From<PyPattern> for tk::normalizers::replace::ReplacePattern {
     fn from(pattern: PyPattern) -> Self {
         match pattern {
             PyPattern::Str(s) => Self::String(s.to_owned()),
-            PyPattern::Regex(r) => Python::with_gil(|py| Self::Regex(r.borrow(py).pattern.clone())),
+            PyPattern::Regex(r) => Python::attach(|py| Self::Regex(r.borrow(py).pattern.clone())),
         }
     }
 }
@@ -48,7 +46,7 @@ impl From<PyPattern> for tk::pre_tokenizers::split::SplitPattern {
     fn from(pattern: PyPattern) -> Self {
         match pattern {
             PyPattern::Str(s) => Self::String(s.to_owned()),
-            PyPattern::Regex(r) => Python::with_gil(|py| Self::Regex(r.borrow(py).pattern.clone())),
+            PyPattern::Regex(r) => Python::attach(|py| Self::Regex(r.borrow(py).pattern.clone())),
         }
     }
 }
@@ -205,9 +203,9 @@ pub struct PyNormalizedString {
 #[pymethods]
 impl PyNormalizedString {
     #[new]
-    #[pyo3(text_signature = None)]
-    fn new(s: &str) -> Self {
-        NormalizedString::from(s).into()
+    #[pyo3(signature = (sequence), text_signature = "(self, sequence)")]
+    fn new(sequence: &str) -> Self {
+        NormalizedString::from(sequence).into()
     }
 
     /// The normalized part of the string
